@@ -1,5 +1,7 @@
 # Remotr
 
+English | [简体中文](./README.zh-CN.md)
+
 > **Remote debugging made effortless** — Inject a script into any webpage and get a **live page mirror** with **Chrome DevTools-like panels** in your browser. No USB, no browser extensions, works across devices.
 
 Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages, WeChat webviews, smart TV/car browsers, client-site troubleshooting, and more.
