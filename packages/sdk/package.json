@@ -1,0 +1,24 @@
+{
+  "name": "@remotr/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui"
+  },
+  "dependencies": {
+    "@remotr/shared": "*",
+    "rrweb": "^2.0.0-alpha.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0",
+    "happy-dom": "^20.10.1",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.8"
+  }
+}

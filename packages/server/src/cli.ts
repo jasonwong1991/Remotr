@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { DEFAULT_PORT } from '@remotr/shared';
+import { startServer } from './index.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** 解析 CLI 参数：--port / --host */
+function parseArgs(argv: string[]) {
+  const out: { port: number; host: string } = {
+    port: Number(process.env.REMOTR_PORT) || DEFAULT_PORT,
+    host: process.env.REMOTR_HOST || '0.0.0.0',
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--port' || a === '-p') out.port = Number(argv[++i]);
+    else if (a === '--host' || a === '-h') out.host = argv[++i];
+  }
+  return out;
+}
+
+const { port, host } = parseArgs(process.argv.slice(2));
+
+// dist 布局: packages/server/dist/cli.js
+// 面板:  packages/debugger/dist
+// SDK:   packages/sdk/dist/remotr.js
+const repoRoot = resolve(__dirname, '..', '..', '..');
+const panelDir = join(repoRoot, 'packages', 'debugger', 'dist');
+const sdkPath = join(repoRoot, 'packages', 'sdk', 'dist', 'remotr.js');
+
+if (!existsSync(sdkPath)) {
+  console.warn(`[warn] 未找到注入脚本: ${sdkPath}`);
+  console.warn(`       请先运行: npm run build:sdk`);
+}
+if (!existsSync(join(panelDir, 'index.html'))) {
+  console.warn(`[warn] 未找到调试面板: ${panelDir}`);
+  console.warn(`       请先运行: npm run build:debugger`);
+}
+
+startServer({ port, host, panelDir, sdkPath });

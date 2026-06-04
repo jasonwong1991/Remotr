@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Remotr Demo Page</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px;
+      color: #222;
+      background: #f7f8fa;
+    }
+    h1 { color: #2d6cdf; }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 20px;
+      margin: 16px 0;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    button {
+      background: #2d6cdf;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 4px;
+      font-size: 14px;
+    }
+    button:hover { background: #1f57c3; }
+    button.danger { background: #e04848; }
+    input {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      margin: 4px;
+      width: 200px;
+    }
+    #counter { font-size: 32px; font-weight: bold; color: #2d6cdf; }
+    .grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .box {
+      width: 60px; height: 60px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      border-radius: 8px;
+      transition: transform .3s;
+    }
+    .box:hover { transform: scale(1.1) rotate(5deg); }
+  </style>
+</head>
+<body>
+  <h1>🐛 Remotr Demo Page</h1>
+  <p>Open the debug panel to observe real-time data and page mirroring from the operations below.</p>
+
+  <div class="card">
+    <h3>Console 测试</h3>
+    <button onclick="testLog()">console.log</button>
+    <button onclick="testWarn()">console.warn</button>
+    <button onclick="testError()">console.error</button>
+    <button onclick="testObject()">打印对象</button>
+    <button class="danger" onclick="throwError()">抛出异常</button>
+    <button class="danger" onclick="rejectPromise()">未捕获 Promise</button>
+  </div>
+
+  <div class="card">
+    <h3>Network 测试</h3>
+    <button onclick="testFetch()">fetch GET</button>
+    <button onclick="testFetchPost()">fetch POST</button>
+    <button onclick="testXHR()">XHR GET</button>
+    <button onclick="testFetch404()">fetch 404</button>
+  </div>
+
+  <div class="card">
+    <h3>Storage 测试</h3>
+    <input id="storageKey" placeholder="key" value="token" />
+    <input id="storageVal" placeholder="value" value="abc123" />
+    <br />
+    <button onclick="setLocal()">写 localStorage</button>
+    <button onclick="setSession()">写 sessionStorage</button>
+    <button onclick="setCookie()">写 Cookie</button>
+  </div>
+
+  <div class="card">
+    <h3>DOM 镜像测试（实时同步到调试面板）</h3>
+    <div id="counter">0</div>
+    <button onclick="increment()">+1</button>
+    <button onclick="addBox()">添加方块</button>
+    <button class="danger" onclick="clearBoxes()">清空</button>
+    <div class="grid" id="boxes"></div>
+  </div>
+
+  <script>
+    function testLog() { console.log('普通日志', { ts: Date.now() }, [1, 2, 3]); }
+    function testWarn() { console.warn('⚠️ 警告信息'); }
+    function testError() { console.error('❌ 错误信息', new Error('示例错误')); }
+    function testObject() {
+      const obj = { name: 'remotr', nested: { a: 1, b: [true, null, 'x'] }, fn: () => {} };
+      obj.self = obj; // circular reference
+      console.log('Complex object:', obj);
+    }
+    function throwError() { null.foo(); }
+    function rejectPromise() { Promise.reject(new Error('未处理的 Promise 拒绝')); }
+
+    function testFetch() {
+      fetch('https://jsonplaceholder.typicode.com/todos/1')
+        .then(r => r.json()).then(d => console.log('fetch 结果:', d));
+    }
+    function testFetchPost() {
+      fetch('https://jsonplaceholder.typicode.com/posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'hello', body: 'world', userId: 1 }),
+      }).then(r => r.json()).then(d => console.log('POST 结果:', d));
+    }
+    function testXHR() {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', 'https://jsonplaceholder.typicode.com/users/1');
+      xhr.onload = () => console.log('XHR 结果:', xhr.status);
+      xhr.send();
+    }
+    function testFetch404() {
+      fetch('https://jsonplaceholder.typicode.com/nonexistent-404')
+        .then(r => console.log('404 状态:', r.status));
+    }
+
+    function setLocal() {
+      localStorage.setItem(val('storageKey'), val('storageVal'));
+      console.log('已写入 localStorage');
+    }
+    function setSession() {
+      sessionStorage.setItem(val('storageKey'), val('storageVal'));
+      console.log('已写入 sessionStorage');
+    }
+    function setCookie() {
+      document.cookie = val('storageKey') + '=' + encodeURIComponent(val('storageVal'));
+      console.log('已写入 Cookie');
+    }
+    function val(id) { return document.getElementById(id).value; }
+
+    let count = 0;
+    function increment() {
+      count++;
+      document.getElementById('counter').textContent = count;
+    }
+    function addBox() {
+      const box = document.createElement('div');
+      box.className = 'box';
+      document.getElementById('boxes').appendChild(box);
+    }
+    function clearBoxes() {
+      document.getElementById('boxes').innerHTML = '';
+    }
+
+    console.log('🎉 Remotr demo page loaded');
+  </script>
+
+  <!-- Inject Remotr SDK: replace with your server address -->
+  <script src="http://localhost:9777/remotr.js" data-room="default"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "remotr",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote debugging made effortless — inject a script and debug any webpage with a local DevTools-like interface",
+  "workspaces": [
+    "packages/shared",
+    "packages/sdk",
+    "packages/server",
+    "packages/debugger"
+  ],
+  "scripts": {
+    "build": "npm run build -w @remotr/shared && npm run build -w @remotr/sdk && npm run build -w @remotr/debugger && npm run build -w @remotr/server",
+    "build:sdk": "npm run build -w @remotr/sdk",
+    "build:debugger": "npm run build -w @remotr/debugger",
+    "dev:debugger": "npm run dev -w @remotr/debugger",
+    "start": "node packages/server/dist/index.js",
+    "dev": "npm run build:sdk && npm run build:debugger && npm run start"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
