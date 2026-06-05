@@ -66,19 +66,28 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
   const roomId = url.searchParams.get('room') || 'default';
   const role = url.searchParams.get('role') === 'sdk' ? 'sdk' : 'debugger';
 
-  // 提取 session 参数（SDK 端会发送这些参数）
-  const sessionParams = {
-    deviceId: url.searchParams.get('deviceId') || undefined,
-    pageId: url.searchParams.get('pageId') || undefined,
-    identity: url.searchParams.get('identity') || undefined,
-  };
+  // 提取 session 参数
+  const deviceId = url.searchParams.get('deviceId') || undefined;
+  const pageId = url.searchParams.get('pageId') || undefined;
+  const identity = url.searchParams.get('identity') || undefined;
 
   const room = rooms.get(roomId);
-  const member = room.add(ws, role, sessionParams);
 
-  // 调试端接入：回放 backlog 重建当前状态
-  if (role === 'debugger') {
-    room.replayTo(ws);
+  let member: import('./room.js').Member;
+
+  if (role === 'sdk') {
+    // SDK 必须携带 deviceId 和 pageId
+    if (!deviceId || !pageId) {
+      ws.close(1008, 'SDK must provide deviceId and pageId');
+      return;
+    }
+    member = room.addSdk(ws, { deviceId, pageId, identity });
+  } else {
+    // Debugger：有 deviceId/pageId 则为 Session 模式，否则为 Dashboard 模式
+    const targetSession = deviceId && pageId ? { deviceId, pageId } : null;
+    member = room.addDebugger(ws, targetSession);
+    // 接入时立即回放
+    room.replayTo(member);
   }
 
   ws.on('message', (raw: Buffer | string) => {
@@ -90,7 +99,13 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
 
   const cleanup = () => {
     room.remove(member);
-    if (room.size === 0) rooms.delete(roomId);
+    // 通知 Dashboard 更新（SDK 离开时）
+    if (member.role === 'sdk') {
+      room.broadcastDashboardSnapshot();
+    }
+    if (room.size === 0 && room.getAllSessions().length === 0) {
+      rooms.delete(roomId);
+    }
   };
   ws.on('close', cleanup);
   ws.on('error', cleanup);
@@ -112,6 +127,15 @@ async function handleHttp(
   if (pathname === '/api/rooms') {
     res.writeHead(200, { 'Content-Type': MIME['.json'] });
     res.end(JSON.stringify(rooms.list()));
+    return;
+  }
+
+  // Sessions API（特定 room 的所有 session）
+  if (pathname.startsWith('/api/rooms/') && pathname.endsWith('/sessions')) {
+    const roomId = pathname.slice('/api/rooms/'.length, -'/sessions'.length);
+    const room = rooms.get(roomId);
+    res.writeHead(200, { 'Content-Type': MIME['.json'] });
+    res.end(JSON.stringify({ room: roomId, sessions: room.getAllSessions() }));
     return;
   }
 

@@ -5,6 +5,7 @@ import {
   type CommandMethod,
   type MethodData,
   type Reply,
+  type SessionId,
   type SpyAtom,
 } from '@remotr/shared';
 import { useStore } from './store';
@@ -19,8 +20,15 @@ const _pending = new Map<string, { resolve: (r: Reply) => void; timer: ReturnTyp
 let _ws: WebSocket | null = null;
 let _reconnectDelay = RECONNECT_BASE_MS;
 let _destroyed = false;
+let _currentSession: SessionId | null = null;
 
 function getRoomId(): string {
+  // 优先从 hash 读取，其次从 search
+  const hash = window.location.hash.slice(1);
+  if (hash.includes('?')) {
+    const params = new URLSearchParams(hash.split('?')[1]);
+    if (params.has('room')) return params.get('room')!;
+  }
   const params = new URLSearchParams(window.location.search);
   return params.get('room') ?? 'default';
 }
@@ -28,7 +36,25 @@ function getRoomId(): string {
 function getWsUrl(): string {
   const { protocol, host } = window.location;
   const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${wsProto}//${host}/ws?room=${encodeURIComponent(getRoomId())}&role=debugger`;
+  const params = new URLSearchParams({
+    room: getRoomId(),
+    role: 'debugger',
+  });
+  if (_currentSession) {
+    params.set('deviceId', _currentSession.deviceId);
+    params.set('pageId', _currentSession.pageId);
+  }
+  return `${wsProto}//${host}/ws?${params.toString()}`;
+}
+
+/** 设置当前 session 目标（用于 Session 调试模式） */
+export function setTargetSession(session: SessionId | null): void {
+  _currentSession = session;
+}
+
+/** 获取当前 session 目标 */
+export function getTargetSession(): SessionId | null {
+  return _currentSession;
 }
 
 function handleFrame(raw: string): void {
@@ -126,6 +152,21 @@ export function disconnect(): void {
   _ws?.close();
 }
 
+/** 重新连接（用于切换 session 时） */
+export function reconnect(): void {
+  _destroyed = false;
+  _ws?.close();
+  // 清空 pending
+  for (const { timer } of _pending.values()) {
+    clearTimeout(timer);
+  }
+  _pending.clear();
+  // 重置 store
+  const store = useStore.getState();
+  store.reset?.();
+  connect();
+}
+
 let _idCounter = 0;
 function nextId(): string {
   return `dbg-${Date.now()}-${++_idCounter}`;
@@ -143,6 +184,10 @@ export function sendCommand<M extends CommandMethod>(
 
     const id = nextId();
     const envelope = makeEnvelope(method, data, 'debugger', id);
+    // 携带 target session（如果是 Session 调试模式）
+    if (_currentSession) {
+      envelope.target = _currentSession;
+    }
     const frame = encodeFrame({ kind: 'msg', envelope });
 
     const timer = setTimeout(() => {

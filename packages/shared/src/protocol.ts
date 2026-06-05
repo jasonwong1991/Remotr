@@ -141,6 +141,30 @@ export interface DomRrwebEvent {
 }
 
 // ─────────────────────────────────────────────────────────
+// Dashboard 事件
+// ─────────────────────────────────────────────────────────
+
+/** Session 快照（供 Dashboard 展示） */
+export interface SessionSnapshot {
+  session: SessionId;
+  identity?: string;
+  /** 是否在线（SDK 还连着） */
+  connected: boolean;
+  /** 最近一次活动时间戳 */
+  lastActive: number;
+  /** 首次连接时间戳 */
+  connectedAt: number;
+  /** 设备/页面信息（来自 system.info 或 SessionMetadata） */
+  systemInfo?: SystemInfoEvent;
+}
+
+/** Dashboard 全量 session 列表事件（Server → Debugger） */
+export interface DashboardSessionsEvent {
+  room: string;
+  sessions: SessionSnapshot[];
+}
+
+// ─────────────────────────────────────────────────────────
 // 命令方法（调试端 → SDK）及其结果
 // ─────────────────────────────────────────────────────────
 
@@ -227,6 +251,8 @@ export interface MethodData {
   'system.info': SystemInfoEvent;
   'page.error': PageErrorEvent;
   'dom.rrweb': DomRrwebEvent;
+  // Dashboard 事件 (Server → debugger)
+  'dashboard.sessions': DashboardSessionsEvent;
   // 命令 (debugger → SDK)
   'eval.run': EvalRunCmd;
   'storage.getAll': StorageGetAllCmd;

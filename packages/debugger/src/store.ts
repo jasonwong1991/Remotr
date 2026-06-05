@@ -80,6 +80,8 @@ interface DebuggerState {
   setElementData: (data: Partial<SelectedElementData>) => void;
   clearElementData: () => void;
   setHoveredNode: (id: number | null) => void;
+  /** 重置整个 store（用于切换 session 时） */
+  reset: () => void;
 }
 
 let _consoleIdCounter = 0;
@@ -196,4 +198,17 @@ export const useStore = create<DebuggerState>((set) => ({
   clearElementData: () => set({ selectedElementData: null }),
 
   setHoveredNode: (hoveredNodeId) => set({ hoveredNodeId }),
+
+  reset: () =>
+    set({
+      connStatus: 'connecting',
+      systemInfo: null,
+      consoleRecords: [],
+      networkMap: new Map(),
+      storage: { local: {}, session: {}, cookie: {} },
+      rrwebEvents: [],
+      selectedNodeId: null,
+      selectedElementData: null,
+      hoveredNodeId: null,
+    }),
 }));
