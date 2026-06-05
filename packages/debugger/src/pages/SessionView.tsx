@@ -3,14 +3,15 @@
  * 复用原 App.tsx 的调试界面，添加返回 Dashboard 的导航
  */
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { reconnect, setTargetSession } from '../ws';
+import { sendCommand } from '../ws';
 import PageMirror from '../panels/PageMirror';
 import ConsolePanel from '../panels/ConsolePanel';
 import NetworkPanel from '../panels/NetworkPanel';
 import ElementsPanel from '../panels/ElementsPanel';
 import StoragePanel from '../panels/StoragePanel';
+import ThemeToggle from '../components/ThemeToggle';
 
 type Tab = 'console' | 'network' | 'elements' | 'storage';
 
@@ -31,18 +32,30 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
   const connStatus = useStore((s) => s.connStatus);
   const systemInfo = useStore((s) => s.systemInfo);
   const [activeTab, setActiveTab] = useState<Tab>('console');
+  const [reloadPending, setReloadPending] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
 
   const [leftWidth, setLeftWidth] = useState(50);
   const dragging = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    setTargetSession({ deviceId, pageId });
-    reconnect();
-    return () => {
-      setTargetSession(null);
-    };
-  }, [deviceId, pageId]);
+  const handleReload = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
+    const hard = event.shiftKey;
+    setReloadPending(true);
+    setReloadError(null);
+    useStore.getState().resetSessionDataPreserveConnection();
+
+    try {
+      const reply = await sendCommand('page.reload', { hard });
+      if (reply.error) {
+        setReloadError(reply.error);
+      }
+    } catch (err) {
+      setReloadError(err instanceof Error ? err.message : 'Reload failed');
+    } finally {
+      setReloadPending(false);
+    }
+  }, []);
 
   const onMouseDown = useCallback(() => {
     dragging.current = true;
@@ -76,7 +89,6 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
-      {/* Top status bar */}
       <div
         style={{
           display: 'flex',
@@ -90,21 +102,21 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
           color: 'var(--text-secondary)',
         }}
       >
-        <button
-          onClick={onBack}
-          style={{
-            background: 'var(--bg-tertiary)',
-            color: 'var(--text-primary)',
-            border: '1px solid var(--border)',
-            padding: '2px 8px',
-            borderRadius: 3,
-            cursor: 'pointer',
-            fontSize: 11,
-          }}
-          title="返回 Dashboard"
-        >
+        <button onClick={onBack} title="返回 Dashboard">
           ← Dashboard
         </button>
+
+        <button
+          onClick={handleReload}
+          disabled={connStatus !== 'connected' || reloadPending}
+          title={reloadPending ? 'Reloading...' : 'Reload remote page (Shift+Click for hard reload)'}
+        >
+          {reloadPending ? '⟳...' : '⟳ Reload'}
+        </button>
+
+        <ThemeToggle />
+
+        {reloadError && <span style={{ color: 'var(--accent-red)' }}>⚠ {reloadError}</span>}
 
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span
@@ -168,7 +180,6 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
         )}
       </div>
 
-      {/* Main split layout */}
       <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div
           style={{
@@ -192,7 +203,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
             Page Mirror
           </div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            <PageMirror />
+            <PageMirror key={`${deviceId}:${pageId}`} />
           </div>
         </div>
 

@@ -1,244 +1,105 @@
 import React, { useState } from 'react';
-import { sendCommand } from '../../ws';
+
+export type LoadStatus = 'idle' | 'loading' | 'success' | 'error';
 
 interface StylesPaneProps {
   styles: Record<string, string> | null;
   nodeId: number | null;
+  status?: LoadStatus;
+  error?: string | null;
+  onRetry?: () => void;
+  onStyleSaved?: () => void;
+  onStyleError?: (error: string) => void;
 }
 
-export default function StylesPane({ styles, nodeId }: StylesPaneProps): React.ReactElement {
+export default function StylesPane({
+  styles,
+  nodeId,
+  status = styles === null ? 'loading' : 'success',
+  error,
+  onRetry,
+  onStyleSaved,
+  onStyleError,
+}: StylesPaneProps): React.ReactElement {
   const [filter, setFilter] = useState('');
   const [editedProps, setEditedProps] = useState<Set<string>>(new Set());
+  const [savingProp, setSavingProp] = useState<string | null>(null);
 
-  // Loading state
-  if (styles === null) {
-    return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      height: '100%',
-      color: 'var(--text-secondary)',
-     fontSize: 12,
-      }}>
-        Loading styles...
-      </div>
-    );
-  }
+  if (status === 'idle') return <PaneState message="Select an element to inspect computed styles." />;
+  if (status === 'loading') return <PaneState message="Loading styles..." />;
+  if (status === 'error') return <PaneState message={error || 'Failed to load styles.'} error onRetry={onRetry} />;
 
-  // Filter styles
-  const entries = Object.entries(styles);
+  const entries = Object.entries(styles ?? {});
   const filtered = entries.filter(([prop, value]) => {
     if (!filter) return true;
     const searchText = filter.toLowerCase();
     return prop.toLowerCase().includes(searchText) || value.toLowerCase().includes(searchText);
   });
 
-  // Empty state
-  if (entries.length === 0) {
-    return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: '100%',
-      color: 'var(--text-muted)',
-      fontSize: 12,
-      }}>
-        No styles found
-      </div>
-  );
-  }
+  if (entries.length === 0) return <PaneState message="No styles found" />;
 
-  const handleValueEdit = (prop: string, newValue: string) => {
+  const handleValueEdit = async (prop: string, newValue: string) => {
     if (nodeId === null) return;
-
-    sendCommand('elements.setStyle', { nodeId, property: prop, value: newValue })
-      .then((reply) => {
+    setSavingProp(prop);
+    try {
+      const { sendCommand } = await import('../../ws');
+      const reply = await sendCommand('elements.setStyle', { nodeId, property: prop, value: newValue });
       if (reply.error) {
-          console.warn('Failed to set style:', reply.error);
-        } else {
-        setEditedProps(prev => new Set(prev).add(prop));
-        }
-      })
-      .catch((err) => {
-        console.warn('Error setting style:', err);
-      });
+        onStyleError?.(reply.error);
+      } else {
+        setEditedProps((prev) => new Set(prev).add(prop));
+        onStyleSaved?.();
+      }
+    } catch (err) {
+      onStyleError?.(err instanceof Error ? err.message : 'Failed to set style');
+    } finally {
+      setSavingProp(null);
+    }
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Toolbar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '4px 8px',
-        background: 'var(--bg-secondary)',
-        borderBottom: '1px solid var(--border)',
-        flexShrink: 0,
-      }}>
-        <input
-          type="text"
-          placeholder="Filter by property or value…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          style={{ flex: 1, maxWidth: 300 }}
-        />
-        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-          {filtered.length} / {entries.length} styles
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <input type="text" placeholder="Filter by property or value…" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ flex: 1, maxWidth: 300 }} />
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Double-click value to apply as inline style</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{filtered.length} / {entries.length} styles</span>
       </div>
-
-      {/* Styles table */}
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {filtered.length === 0 ? (
-          <div style={{
-            padding: '12px 8px',
-            color: 'var(--text-muted)',
-        fontSize: 11,
-            textAlign: 'center',
-      }}>
-            No styles match filter
-          </div>
+          <div style={{ padding: '12px 8px', color: 'var(--text-muted)', fontSize: 11, textAlign: 'center' }}>No styles match filter</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-         <thead>
-          <tr style={{ background: 'var(--bg-tertiary)', position: 'sticky', top: 0 }}>
-                <th style={{
-                  textAlign: 'left',
-             padding: '4px 8px',
-                  borderBottom: '1px solid var(--border)',
-                  fontSize: 11,
-             fontWeight: 600,
-            color: 'var(--text-secondary)',
-                  width: '35%',
-              }}>
-                Property
-                </th>
-              <th style={{
-                  textAlign: 'left',
-                  padding: '4px 8px',
-                borderBottom: '1px solid var(--border)',
-                fontSize: 11,
-               fontWeight: 600,
-                  color: 'var(--text-secondary)',
-              }}>
-              Value
-                </th>
-              </tr>
-            </thead>
+            <thead><tr><th>Property</th><th>Value</th></tr></thead>
             <tbody>
               {filtered.map(([prop, value], index) => {
-                const isLongValue = value.length > 100;
-            const displayValue = isLongValue ? value.slice(0, 100) + '...' : value;
+                const displayValue = value.length > 100 ? value.slice(0, 100) + '...' : value;
                 const isEdited = editedProps.has(prop);
-
                 return (
-              <tr
-                    key={prop}
-                 style={{
-                   background: index % 2 === 0 ? 'transparent' : 'var(--bg-secondary)',
-              }}
-                  >
-                    <td
-                      style={{
-                      padding: '3px 8px',
-                     fontSize: 11,
-               fontFamily: 'var(--font-mono)',
-                 color: 'var(--accent-blue)',
-                        verticalAlign: 'top',
-                        borderBottom: '1px solid var(--border)',
-                    }}
-                    >
-                  {prop}
-                  </td>
-            <td
-                      style={{
-             padding: '3px 8px',
-                 fontSize: 11,
-                        fontFamily: 'var(--font-mono)',
-                        color: isEdited ? 'var(--accent-orange)' : 'var(--text-primary)',
-                  fontWeight: isEdited ? 600 : 400,
-              wordBreak: 'break-all',
-                borderBottom: '1px solid var(--border)',
-                      }}
-                    title={isLongValue ? value : 'Double-click to edit'}
-            >
-                      <EditableValue
-            value={displayValue}
-              fullValue={value}
-                 onSave={(newValue) => handleValueEdit(prop, newValue)}
-              />
-                </td>
+                  <tr key={prop} style={{ background: index % 2 === 0 ? 'transparent' : 'var(--bg-secondary)' }}>
+                    <td style={{ padding: '3px 8px', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)', verticalAlign: 'top', borderBottom: '1px solid var(--border)' }}>{prop}</td>
+                    <td title={value.length > 100 ? value : 'Double-click value to apply as inline style'} style={{ padding: '3px 8px', fontSize: 11, fontFamily: 'var(--font-mono)', color: isEdited ? 'var(--accent-orange)' : 'var(--text-primary)', fontWeight: isEdited ? 600 : 400, wordBreak: 'break-all', borderBottom: '1px solid var(--border)' }}>
+                      <EditableValue value={savingProp === prop ? 'Saving...' : displayValue} fullValue={value} onSave={(newValue) => handleValueEdit(prop, newValue)} />
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
-     </table>
+          </table>
         )}
       </div>
     </div>
   );
 }
 
-interface EditableValueProps {
-  value: string;
-  fullValue: string;
-  onSave: (newValue: string) => void;
+function PaneState({ message, error, onRetry }: { message: string; error?: boolean; onRetry?: () => void }): React.ReactElement {
+  return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, height: '100%', color: error ? 'var(--accent-red)' : 'var(--text-secondary)', fontSize: 12 }}><span>{message}</span>{onRetry && <button onClick={onRetry}>Retry</button>}</div>;
 }
 
+interface EditableValueProps { value: string; fullValue: string; onSave: (newValue: string) => void; }
 function EditableValue({ value, fullValue, onSave }: EditableValueProps): React.ReactElement {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(fullValue);
-
-  const handleDoubleClick = () => {
-    setEditing(true);
-    setEditValue(fullValue);
-  };
-
-  const handleBlur = () => {
-    setEditing(false);
-    if (editValue !== fullValue) {
-      onSave(editValue);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleBlur();
-    } else if (e.key === 'Escape') {
-      setEditing(false);
-      setEditValue(fullValue);
-    }
-  };
-
-  if (editing) {
-    return (
-    <input
-        type="text"
-        value={editValue}
-      onChange={(e) => setEditValue(e.target.value)}
-        onBlur={handleBlur}
-        onKeyDown={handleKeyDown}
-        autoFocus
-        style={{
-          width: '100%',
-          border: '1px solid var(--accent-blue)',
-          background: 'var(--bg-primary)',
-          color: 'var(--text-primary)',
-          fontFamily: 'var(--font-mono)',
-        fontSize: 11,
-          padding: '2px 4px',
-        }}
-      />
-    );
-  }
-
-  return (
-    <span onDoubleClick={handleDoubleClick} style={{ cursor: 'text' }}>
-    {value}
-    </span>
-  );
+  const close = (save: boolean) => { setEditing(false); if (save && editValue !== fullValue) onSave(editValue); };
+  if (editing) return <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={() => close(true)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); close(true); } else if (e.key === 'Escape') close(false); }} autoFocus style={{ width: '100%', border: '1px solid var(--accent-blue)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '2px 4px' }} />;
+  return <span onDoubleClick={() => { setEditing(true); setEditValue(fullValue); }} style={{ cursor: 'text' }}>{value}</span>;
 }

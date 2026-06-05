@@ -14,8 +14,9 @@
     "build:sdk": "npm run build -w @remotr/sdk",
     "build:debugger": "npm run build -w @remotr/debugger",
     "dev:debugger": "npm run dev -w @remotr/debugger",
-    "start": "node packages/server/dist/index.js",
-    "dev": "npm run build:sdk && npm run build:debugger && npm run start"
+    "dev:server": "npm run dev -w @remotr/server",
+    "dev": "npm run dev:server",
+    "start": "node packages/server/dist/cli.js"
   },
   "engines": {
     "node": ">=18"

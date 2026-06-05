@@ -12,15 +12,30 @@ export default function PageMirror(): React.ReactElement {
   const replayerRef = useRef<InstanceType<typeof Replayer> | null>(null);
   const processedCountRef = useRef(0);
   const hasFullSnapshotRef = useRef(false);
-  // 用 state 驱动 overlay 显隐——ref 变化不会触发重渲染，必须用 state，
-  // 否则即便镜像已初始化，绝对定位的 "Waiting" 遮罩仍会盖在镜像之上。
   const [ready, setReady] = React.useState(false);
+
+  const resetReplayer = React.useCallback(() => {
+    try {
+      replayerRef.current?.destroy?.();
+    } catch {
+      // ignore
+    }
+    replayerRef.current = null;
+    processedCountRef.current = 0;
+    hasFullSnapshotRef.current = false;
+    setReady(false);
+    if (containerRef.current) {
+      containerRef.current.innerHTML = '';
+    }
+  }, []);
 
   useEffect(() => {
     const events = rrwebEvents;
-    if (events.length === 0) return;
+    if (events.length === 0) {
+      resetReplayer();
+      return;
+    }
 
-    // Find first unprocessed events
     const newEvents = events.slice(processedCountRef.current);
     if (newEvents.length === 0) return;
 
@@ -28,19 +43,20 @@ export default function PageMirror(): React.ReactElement {
       const ev = event as { type?: number };
 
       if (!hasFullSnapshotRef.current) {
-        // Wait for FullSnapshot to init Replayer
         if (ev.type === FULL_SNAPSHOT_TYPE) {
           hasFullSnapshotRef.current = true;
           if (!containerRef.current) continue;
 
-          // Destroy previous replayer if any
           if (replayerRef.current) {
-            try { replayerRef.current.destroy?.(); } catch { /* ignore */ }
+            try {
+              replayerRef.current.destroy?.();
+            } catch {
+              // ignore
+            }
             replayerRef.current = null;
             containerRef.current.innerHTML = '';
           }
 
-          // Init with all events up to and including this one
           const initEvents = events.slice(0, processedCountRef.current + newEvents.indexOf(event) + 1);
           try {
             replayerRef.current = new Replayer(initEvents, {
@@ -51,7 +67,6 @@ export default function PageMirror(): React.ReactElement {
               showDebug: false,
               blockClass: '__rrweb_noop__',
             });
-            // live 模式需从基线时间戳开始播放
             const baseTs = (initEvents[0] as { timestamp?: number })?.timestamp;
             replayerRef.current.startLive?.(baseTs);
             setReady(true);
@@ -60,7 +75,6 @@ export default function PageMirror(): React.ReactElement {
           }
         }
       } else if (replayerRef.current) {
-        // Add subsequent events
         try {
           replayerRef.current.addEvent(event);
         } catch (e) {
@@ -70,33 +84,43 @@ export default function PageMirror(): React.ReactElement {
     }
 
     processedCountRef.current = events.length;
-  }, [rrwebEvents]);
+  }, [resetReplayer, rrwebEvents]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      try { replayerRef.current?.destroy?.(); } catch { /* ignore */ }
-    };
-  }, []);
+  useEffect(() => resetReplayer, [resetReplayer]);
 
   const systemInfo = useStore((s) => s.systemInfo);
   const vp = systemInfo?.viewport;
 
   return (
-    <div style={{ width: '100%', height: '100%', overflow: 'hidden', position: 'relative', background: '#1a1a1a' }}>
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        overflow: 'auto',
+        position: 'relative',
+        background: 'var(--mirror-bg)',
+      }}
+    >
       {!ready && (
-        <div style={{
-          position: 'absolute', inset: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexDirection: 'column', gap: 8,
-          color: 'var(--text-muted)', fontSize: 13,
-        }}>
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'column',
+            gap: 8,
+            color: 'var(--text-muted)',
+            fontSize: 13,
+            zIndex: 1,
+          }}
+        >
           <span style={{ fontSize: 32 }}>⬜</span>
           <span>Waiting for page snapshot…</span>
           {vp && <span style={{ fontSize: 11 }}>{vp.width}×{vp.height}</span>}
         </div>
       )}
-      {/* Scale wrapper */}
       <ScaleContainer vpWidth={vp?.width} vpHeight={vp?.height}>
         <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       </ScaleContainer>
@@ -122,8 +146,9 @@ function ScaleContainer({
     const obs = new ResizeObserver(([entry]) => {
       if (!entry) return;
       const { width, height } = entry.contentRect;
-      const scaleX = width / vpWidth;
-      const scaleY = height / vpHeight;
+      const padding = 24;
+      const scaleX = Math.max(0, width - padding) / vpWidth;
+      const scaleY = Math.max(0, height - padding) / vpHeight;
       setScale(Math.min(scaleX, scaleY, 1));
     });
 
@@ -131,15 +156,41 @@ function ScaleContainer({
     return () => obs.disconnect();
   }, [vpWidth, vpHeight]);
 
+  const shellWidth = vpWidth ? vpWidth * scale : undefined;
+  const shellHeight = vpHeight ? vpHeight * scale : undefined;
+
   return (
-    <div ref={wrapRef} style={{ width: '100%', height: '100%', overflow: 'hidden', position: 'relative' }}>
-      <div style={{
-        transformOrigin: 'top left',
-        transform: `scale(${scale})`,
-        width: vpWidth ? `${vpWidth}px` : '100%',
-        height: vpHeight ? `${vpHeight}px` : '100%',
-      }}>
-        {children}
+    <div
+      ref={wrapRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        minWidth: shellWidth ? `${shellWidth}px` : '100%',
+        minHeight: shellHeight ? `${shellHeight}px` : '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 12,
+      }}
+    >
+      <div
+        style={{
+          width: shellWidth ? `${shellWidth}px` : '100%',
+          height: shellHeight ? `${shellHeight}px` : '100%',
+          flex: '0 0 auto',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            transformOrigin: 'top left',
+            transform: `scale(${scale})`,
+            width: vpWidth ? `${vpWidth}px` : '100%',
+            height: vpHeight ? `${vpHeight}px` : '100%',
+          }}
+        >
+          {children}
+        </div>
       </div>
     </div>
   );

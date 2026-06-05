@@ -21,6 +21,7 @@ let _ws: WebSocket | null = null;
 let _reconnectDelay = RECONNECT_BASE_MS;
 let _destroyed = false;
 let _currentSession: SessionId | null = null;
+let _connectionGeneration = 0; // Guard against stale socket callbacks
 
 function getRoomId(): string {
   // 优先从 hash 读取，其次从 search
@@ -47,6 +48,13 @@ function getWsUrl(): string {
   return `${wsProto}//${host}/ws?${params.toString()}`;
 }
 
+/** Helper to compare sessions by value */
+function sameSession(a: SessionId | null, b: SessionId | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.deviceId === b.deviceId && a.pageId === b.pageId;
+}
+
 /** 设置当前 session 目标（用于 Session 调试模式） */
 export function setTargetSession(session: SessionId | null): void {
   _currentSession = session;
@@ -57,7 +65,10 @@ export function getTargetSession(): SessionId | null {
   return _currentSession;
 }
 
-function handleFrame(raw: string): void {
+function handleFrame(raw: string, generation: number): void {
+  // Ignore messages from stale connections
+  if (generation !== _connectionGeneration) return;
+
   const frame = decodeFrame(raw);
   if (!frame) return;
 
@@ -109,6 +120,8 @@ function handleFrame(raw: string): void {
     case 'elements.picked': {
       const d = data as MethodData['elements.picked'];
       store.setSelectedNode(d.nodeId);
+      store.setPickerActive?.(false);
+      store.setPickerPending?.(false);
       break;
     }
     default:
@@ -121,19 +134,22 @@ export function connect(): void {
   const store = useStore.getState();
   store.setConnStatus('connecting');
 
+  const generation = ++_connectionGeneration;
   const ws = new WebSocket(getWsUrl());
   _ws = ws;
 
   ws.onopen = () => {
+    if (generation !== _connectionGeneration) return; // Stale connection
     _reconnectDelay = RECONNECT_BASE_MS;
     useStore.getState().setConnStatus('connected');
   };
 
   ws.onmessage = (evt) => {
-    if (typeof evt.data === 'string') handleFrame(evt.data);
+    if (typeof evt.data === 'string') handleFrame(evt.data, generation);
   };
 
   ws.onclose = () => {
+    if (generation !== _connectionGeneration) return; // Stale connection
     _ws = null;
     useStore.getState().setConnStatus('disconnected');
     if (!_destroyed) {
@@ -155,6 +171,7 @@ export function disconnect(): void {
 /** 重新连接（用于切换 session 时） */
 export function reconnect(): void {
   _destroyed = false;
+  _connectionGeneration++; // Invalidate old connection
   _ws?.close();
   // 清空 pending
   for (const { timer } of _pending.values()) {
@@ -165,6 +182,41 @@ export function reconnect(): void {
   const store = useStore.getState();
   store.reset?.();
   connect();
+}
+
+/** Switch target session (centralized session switching) */
+export function switchTargetSession(session: SessionId | null): void {
+  const prevSession = _currentSession;
+
+  // Use value comparison, not object reference
+  if (sameSession(prevSession, session)) {
+    return; // No change
+  }
+
+  _currentSession = session;
+
+  // Clear pending commands
+  for (const { timer } of _pending.values()) {
+    clearTimeout(timer);
+  }
+  _pending.clear();
+
+  // Reset store when switching
+  const store = useStore.getState();
+  store.reset();
+
+  // If switching sessions (not just clearing), reconnect
+  if (session !== null) {
+    _destroyed = false;
+    _connectionGeneration++; // Invalidate old connection
+    _ws?.close();
+    connect();
+  } else {
+    // Navigating to dashboard - disconnect
+    _destroyed = true;
+    _connectionGeneration++; // Invalidate old connection
+    _ws?.close();
+  }
 }
 
 let _idCounter = 0;

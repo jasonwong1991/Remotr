@@ -61,6 +61,9 @@ interface DebuggerState {
   selectedNodeId: number | null;
   selectedElementData: SelectedElementData | null;
   hoveredNodeId: number | null;
+  pickerActive: boolean;
+  pickerPending: boolean;
+  pickerError: string | null;
 
   // Actions
   setConnStatus: (s: ConnStatus) => void;
@@ -80,8 +83,13 @@ interface DebuggerState {
   setElementData: (data: Partial<SelectedElementData>) => void;
   clearElementData: () => void;
   setHoveredNode: (id: number | null) => void;
+  setPickerActive: (active: boolean) => void;
+  setPickerPending: (pending: boolean) => void;
+  setPickerError: (error: string | null) => void;
   /** 重置整个 store（用于切换 session 时） */
   reset: () => void;
+  /** 重置 session 运行时数据但保留连接状态（用于页面刷新时） */
+  resetSessionDataPreserveConnection: () => void;
 }
 
 let _consoleIdCounter = 0;
@@ -105,6 +113,9 @@ export const useStore = create<DebuggerState>((set) => ({
   selectedNodeId: null,
   selectedElementData: null,
   hoveredNodeId: null,
+  pickerActive: false,
+  pickerPending: false,
+  pickerError: null,
 
   setConnStatus: (connStatus) => set({ connStatus }),
   setSystemInfo: (systemInfo) => set({ systemInfo }),
@@ -132,7 +143,6 @@ export const useStore = create<DebuggerState>((set) => ({
         { id: nextId(), type: 'eval-result', level: 'log', evalResult: { code, atom }, timestamp: ts },
       ],
     })),
-
   clearConsole: () => set({ consoleRecords: [] }),
 
   addNetworkRequest: (req) =>
@@ -145,7 +155,7 @@ export const useStore = create<DebuggerState>((set) => ({
 
   addNetworkResponse: (res) =>
     set((s) => {
-      const map = new Map(s.networkMap);
+   const map = new Map(s.networkMap);
       const existing = map.get(res.reqId) ?? { reqId: res.reqId };
       map.set(res.reqId, { ...existing, response: res });
       return { networkMap: map };
@@ -157,14 +167,14 @@ export const useStore = create<DebuggerState>((set) => ({
       const existing = map.get(err.reqId) ?? { reqId: err.reqId };
       map.set(err.reqId, { ...existing, error: err });
       return { networkMap: map };
-    }),
+  }),
 
   clearNetwork: () => set({ networkMap: new Map() }),
 
   applyStorageSnapshot: (snap) =>
     set((s) => {
       const key = storageKey(snap.storageType);
-      const data: StorageData = {};
+    const data: StorageData = {};
       for (const [k, v] of snap.entries) data[k] = v;
       return { storage: { ...s.storage, [key]: data } };
     }),
@@ -199,6 +209,10 @@ export const useStore = create<DebuggerState>((set) => ({
 
   setHoveredNode: (hoveredNodeId) => set({ hoveredNodeId }),
 
+  setPickerActive: (pickerActive) => set({ pickerActive }),
+  setPickerPending: (pickerPending) => set({ pickerPending }),
+  setPickerError: (pickerError) => set({ pickerError }),
+
   reset: () =>
     set({
       connStatus: 'connecting',
@@ -210,5 +224,24 @@ export const useStore = create<DebuggerState>((set) => ({
       selectedNodeId: null,
       selectedElementData: null,
       hoveredNodeId: null,
+      pickerActive: false,
+      pickerPending: false,
+      pickerError: null,
     }),
+
+  resetSessionDataPreserveConnection: () =>
+    set(() => ({
+      // Keep connStatus
+      systemInfo: null,
+      consoleRecords: [],
+      networkMap: new Map(),
+      storage: { local: {}, session: {}, cookie: {} },
+      rrwebEvents: [],
+      selectedNodeId: null,
+      selectedElementData: null,
+      hoveredNodeId: null,
+      pickerActive: false,
+      pickerPending: false,
+      pickerError: null,
+    })),
 }));

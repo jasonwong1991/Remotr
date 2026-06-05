@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useRoute, navigateToDashboard } from './router';
 import Dashboard from './pages/Dashboard';
 import SessionView from './pages/SessionView';
-import { setTargetSession, connect, disconnect } from './ws';
+import { switchTargetSession } from './ws';
 
 export default function App(): React.ReactElement {
   const route = useRoute();
@@ -13,11 +13,9 @@ export default function App(): React.ReactElement {
     const pageId = route.params.get('pageId');
 
     if (route.name === 'session' && deviceId && pageId) {
-      setTargetSession({ deviceId, pageId });
-      connect();
+      switchTargetSession({ deviceId, pageId });
     } else {
-      setTargetSession(null);
-      disconnect();
+      switchTargetSession(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.name, route.params.get('deviceId'), route.params.get('pageId')]);

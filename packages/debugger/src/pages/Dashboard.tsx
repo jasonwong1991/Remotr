@@ -7,6 +7,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import type { SessionSnapshot, DashboardSessionsEvent } from '@remotr/shared';
 import { decodeFrame } from '@remotr/shared';
 import { navigateToSession } from '../router';
+import ThemeToggle from '../components/ThemeToggle';
 
 type GroupBy = 'identity' | 'device';
 
@@ -134,6 +135,8 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
         </span>
 
         <div style={{ flex: 1 }} />
+
+        <ThemeToggle />
 
         <div style={{ display: 'flex', gap: 4 }}>
           <button
