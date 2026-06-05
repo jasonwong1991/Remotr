@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useStore } from '../../store';
-import { sendCommand } from '../../ws';
 
 // rrweb node types
 const NODE_TYPE = {
@@ -80,16 +79,6 @@ function DomNode({ node, depth = 0 }: { node: RrwebNode; depth?: number }): Reac
           e.stopPropagation();
           if (hasChildren) setExpanded((v) => !v);
           setSelectedNode(node.id);
-        }}
-        onMouseEnter={() => {
-          sendCommand('elements.highlight', { nodeId: node.id }).catch(() => {
-            // Ignore highlight errors
-          });
-        }}
-        onMouseLeave={() => {
-        sendCommand('elements.highlight', { nodeId: null }).catch(() => {
-            // Ignore highlight errors
-          });
         }}
         style={{
           cursor: 'pointer',

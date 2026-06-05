@@ -56,59 +56,133 @@ export default function PageMirror(): React.ReactElement {
   // Picker event handlers
   useEffect(() => {
     if (!pickerActive || !ready || !replayerRef.current) {
+      console.log('[PageMirror Picker] Inactive - pickerActive:', pickerActive, 'ready:', ready, 'replayer:', !!replayerRef.current);
       updateOverlay(null);
       hoveredElementRef.current = null;
       return;
     }
 
     const iframe = replayerRef.current.iframe;
-    if (!iframe || !iframe.contentDocument) {
-      console.warn('[PageMirror] Picker active but no iframe found');
+    const container = containerRef.current;
+
+    console.log('[PageMirror Picker] Initializing picker...');
+    console.log('[PageMirror Picker] iframe exists:', !!iframe);
+    console.log('[PageMirror Picker] iframe.contentDocument exists:', !!iframe?.contentDocument);
+    console.log('[PageMirror Picker] container exists:', !!container);
+
+    if (!iframe || !iframe.contentDocument || !container) {
+      console.warn('[PageMirror Picker] Missing required elements - iframe:', !!iframe, 'contentDocument:', !!iframe?.contentDocument, 'container:', !!container);
       return;
     }
 
     const doc = iframe.contentDocument;
+    console.log('[PageMirror Picker] doc.body exists:', !!doc.body);
+
+    // Get iframe position relative to container
+  const getIframeRect = () => {
+      const iframeRect = iframe.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      return {
+        left: iframeRect.left - containerRect.left,
+        top: iframeRect.top - containerRect.top,
+        width: iframeRect.width,
+        height: iframeRect.height,
+      };
+    };
 
     const onMouseMove = (e: MouseEvent) => {
-      const target = doc.elementFromPoint(e.clientX, e.clientY);
+      console.log('[PageMirror Picker] mousemove event fired - clientX:', e.clientX, 'clientY:', e.clientY);
+
+      const containerRect = container.getBoundingClientRect();
+      const iframeRect = getIframeRect();
+
+      // Calculate coordinates relative to container
+      const containerX = e.clientX - containerRect.left;
+      const containerY = e.clientY - containerRect.top;
+
+      console.log('[PageMirror Picker] Container coords:', containerX, containerY);
+      console.log('[PageMirror Picker] Iframe rect:', iframeRect);
+
+      // Calculate coordinates relative to iframe
+      const iframeX = containerX - iframeRect.left;
+    const iframeY = containerY - iframeRect.top;
+
+      console.log('[PageMirror Picker] Iframe coords:', iframeX, iframeY);
+
+      // Check if inside iframe bounds
+      if (iframeX < 0 || iframeY < 0 || iframeX > iframeRect.width || iframeY > iframeRect.height) {
+        console.log('[PageMirror Picker] Outside iframe bounds');
+        updateOverlay(null);
+        hoveredElementRef.current = null;
+        return;
+      }
+
+      const target = doc.elementFromPoint(iframeX, iframeY);
+      console.log('[PageMirror Picker] elementFromPoint returned:', target?.tagName, target);
+
       if (target && target !== hoveredElementRef.current) {
+        console.log('[PageMirror Picker] New hover target:', target.tagName, target.className);
         hoveredElementRef.current = target;
         updateOverlay(target);
       }
     };
 
     const onClick = (e: MouseEvent) => {
+      console.log('[PageMirror Picker] click event fired');
       e.preventDefault();
       e.stopPropagation();
 
-      const target = doc.elementFromPoint(e.clientX, e.clientY);
-      if (!target) return;
+      const containerRect = container.getBoundingClientRect();
+      const iframeRect = getIframeRect();
+
+      const containerX = e.clientX - containerRect.left;
+      const containerY = e.clientY - containerRect.top;
+      const iframeX = containerX - iframeRect.left;
+      const iframeY = containerY - iframeRect.top;
+
+      console.log('[PageMirror Picker] Click at iframe coords:', iframeX, iframeY);
+
+      const target = doc.elementFromPoint(iframeX, iframeY);
+      console.log('[PageMirror Picker] Click target:', target?.tagName, target);
+
+      if (!target) {
+        console.warn('[PageMirror Picker] No target found at click position');
+        return;
+      }
 
       // Get rrweb node ID from the replayer's mirror
       const mirror = (replayerRef.current as any)?.getMirror?.();
+      console.log('[PageMirror Picker] Mirror exists:', !!mirror, 'getId exists:', !!mirror?.getId);
+
       if (!mirror || !mirror.getId) {
-        console.warn('[PageMirror] Replayer mirror not available');
+        console.warn('[PageMirror Picker] Replayer mirror not available');
         return;
       }
 
       const nodeId = mirror.getId(target);
+      console.log('[PageMirror Picker] Element rrweb nodeId:', nodeId);
+
       if (nodeId && nodeId !== -1) {
-        console.log('[PageMirror] Picked element with rrweb ID:', nodeId);
+        console.log('[PageMirror Picker] ✓ Picked element with rrweb ID:', nodeId, target.tagName);
         setSelectedNode(nodeId);
         useStore.getState().setPickerActive(false);
+    } else {
+        console.warn('[PageMirror Picker] Invalid nodeId:', nodeId);
       }
     };
 
-    doc.addEventListener('mousemove', onMouseMove);
-    doc.addEventListener('click', onClick, true);
-    doc.body.style.cursor = 'crosshair';
+    // Attach to container, not iframe
+    container.addEventListener('mousemove', onMouseMove);
+    container.addEventListener('click', onClick, true);
+    container.style.cursor = 'crosshair';
 
-    console.log('[PageMirror] Picker events attached to replayer iframe');
+    console.log('[PageMirror Picker] ✓ Events attached to container');
 
     return () => {
-      doc.removeEventListener('mousemove', onMouseMove);
-      doc.removeEventListener('click', onClick, true);
-      doc.body.style.cursor = '';
+      console.log('[PageMirror Picker] Cleanup - removing events');
+      container.removeEventListener('mousemove', onMouseMove);
+      container.removeEventListener('click', onClick, true);
+      container.style.cursor = '';
       updateOverlay(null);
       hoveredElementRef.current = null;
     };
