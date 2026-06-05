@@ -9,14 +9,23 @@ const FULL_SNAPSHOT_TYPE = 2;
 export default function PageMirror(): React.ReactElement {
   const rrwebEvents = useStore((s) => s.rrwebEvents);
   const pickerActive = useStore((s) => s.pickerActive);
+  const selectedNodeId = useStore((s) => s.selectedNodeId);
   const setSelectedNode = useStore((s) => s.setSelectedNode);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const replayerRef = useRef<InstanceType<typeof Replayer> | null>(null);
   const processedCountRef = useRef(0);
   const hasFullSnapshotRef = useRef(false);
   const [ready, setReady] = React.useState(false);
-  const overlayRef = useRef<HTMLDivElement | null>(null);
-  const hoveredElementRef = useRef<Element | null>(null);
+
+  // Overlays live in the scaled space (siblings of the iframe), so their
+  // coordinates use iframe-internal values multiplied by the current scale.
+  const hoverOverlayRef = useRef<HTMLDivElement | null>(null);
+  const selectOverlayRef = useRef<HTMLDivElement | null>(null);
+  const scaleRef = useRef(1);
+
+  const systemInfo = useStore((s) => s.systemInfo);
+  const vp = systemInfo?.viewport;
 
   const resetReplayer = React.useCallback(() => {
     try {
@@ -28,166 +37,102 @@ export default function PageMirror(): React.ReactElement {
     processedCountRef.current = 0;
     hasFullSnapshotRef.current = false;
     setReady(false);
-    if (containerRef.current) {
-      containerRef.current.innerHTML = '';
-    }
   }, []);
 
-  // Picker overlay styling
-  const updateOverlay = React.useCallback((element: Element | null) => {
-    if (!overlayRef.current) return;
+  /**
+   * Position an overlay box over an iframe-internal element.
+   * The overlays are siblings of the iframe INSIDE the scaled (transform:scale)
+   * layer, so they share the iframe's unscaled coordinate space — the parent
+   * transform scales them visually. Therefore we use the element's raw
+   * iframe-internal rect with no scale multiplication.
+   */
+  const positionOverlay = React.useCallback(
+    (overlay: HTMLDivElement | null, element: Element | null) => {
+      if (!overlay) return;
+      if (!element) {
+        overlay.style.display = 'none';
+        return;
+      }
+      const rect = element.getBoundingClientRect();
+      overlay.style.display = 'block';
+      overlay.style.left = `${rect.left}px`;
+      overlay.style.top = `${rect.top}px`;
+      overlay.style.width = `${rect.width}px`;
+      overlay.style.height = `${rect.height}px`;
+    },
+    [],
+  );
 
-    if (!element) {
-      overlayRef.current.style.display = 'none';
-      return;
-    }
-
-    const rect = element.getBoundingClientRect();
-    const container = containerRef.current?.getBoundingClientRect();
-    if (!container) return;
-
-    overlayRef.current.style.display = 'block';
-    overlayRef.current.style.left = `${rect.left - container.left}px`;
-    overlayRef.current.style.top = `${rect.top - container.top}px`;
-    overlayRef.current.style.width = `${rect.width}px`;
-    overlayRef.current.style.height = `${rect.height}px`;
-  }, []);
-
-  // Picker event handlers
+  // ── Picker: hover + click inside the replayer iframe ──────────────────────
   useEffect(() => {
     if (!pickerActive || !ready || !replayerRef.current) {
-      console.log('[PageMirror Picker] Inactive - pickerActive:', pickerActive, 'ready:', ready, 'replayer:', !!replayerRef.current);
-      updateOverlay(null);
-      hoveredElementRef.current = null;
+      positionOverlay(hoverOverlayRef.current, null);
       return;
     }
 
     const iframe = replayerRef.current.iframe;
-    const container = containerRef.current;
+    const doc = iframe?.contentDocument;
+    if (!iframe || !doc) return;
 
-    console.log('[PageMirror Picker] Initializing picker...');
-    console.log('[PageMirror Picker] iframe exists:', !!iframe);
-    console.log('[PageMirror Picker] iframe.contentDocument exists:', !!iframe?.contentDocument);
-    console.log('[PageMirror Picker] container exists:', !!container);
-
-    if (!iframe || !iframe.contentDocument || !container) {
-      console.warn('[PageMirror Picker] Missing required elements - iframe:', !!iframe, 'contentDocument:', !!iframe?.contentDocument, 'container:', !!container);
-      return;
-    }
-
-    const doc = iframe.contentDocument;
-    console.log('[PageMirror Picker] doc.body exists:', !!doc.body);
-
-    // Get iframe position relative to container
-  const getIframeRect = () => {
+    // Translate a viewport mouse coordinate into iframe-internal coordinates.
+    // The iframe is rendered at `scale`, so divide the offset by scale.
+    const toIframeCoords = (clientX: number, clientY: number) => {
       const iframeRect = iframe.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
+      const scale = scaleRef.current || 1;
       return {
-        left: iframeRect.left - containerRect.left,
-        top: iframeRect.top - containerRect.top,
-        width: iframeRect.width,
-        height: iframeRect.height,
+        x: (clientX - iframeRect.left) / scale,
+        y: (clientY - iframeRect.top) / scale,
       };
     };
 
     const onMouseMove = (e: MouseEvent) => {
-      console.log('[PageMirror Picker] mousemove event fired - clientX:', e.clientX, 'clientY:', e.clientY);
-
-      const containerRect = container.getBoundingClientRect();
-      const iframeRect = getIframeRect();
-
-      // Calculate coordinates relative to container
-      const containerX = e.clientX - containerRect.left;
-      const containerY = e.clientY - containerRect.top;
-
-      console.log('[PageMirror Picker] Container coords:', containerX, containerY);
-      console.log('[PageMirror Picker] Iframe rect:', iframeRect);
-
-      // Calculate coordinates relative to iframe
-      const iframeX = containerX - iframeRect.left;
-    const iframeY = containerY - iframeRect.top;
-
-      console.log('[PageMirror Picker] Iframe coords:', iframeX, iframeY);
-
-      // Check if inside iframe bounds
-      if (iframeX < 0 || iframeY < 0 || iframeX > iframeRect.width || iframeY > iframeRect.height) {
-        console.log('[PageMirror Picker] Outside iframe bounds');
-        updateOverlay(null);
-        hoveredElementRef.current = null;
-        return;
-      }
-
-      const target = doc.elementFromPoint(iframeX, iframeY);
-      console.log('[PageMirror Picker] elementFromPoint returned:', target?.tagName, target);
-
-      if (target && target !== hoveredElementRef.current) {
-        console.log('[PageMirror Picker] New hover target:', target.tagName, target.className);
-        hoveredElementRef.current = target;
-        updateOverlay(target);
-      }
+      const { x, y } = toIframeCoords(e.clientX, e.clientY);
+      const target = doc.elementFromPoint(x, y);
+      positionOverlay(hoverOverlayRef.current, target);
     };
 
     const onClick = (e: MouseEvent) => {
-      console.log('[PageMirror Picker] click event fired');
       e.preventDefault();
       e.stopPropagation();
+      const { x, y } = toIframeCoords(e.clientX, e.clientY);
+      const target = doc.elementFromPoint(x, y);
+      if (!target) return;
 
-      const containerRect = container.getBoundingClientRect();
-      const iframeRect = getIframeRect();
-
-      const containerX = e.clientX - containerRect.left;
-      const containerY = e.clientY - containerRect.top;
-      const iframeX = containerX - iframeRect.left;
-      const iframeY = containerY - iframeRect.top;
-
-      console.log('[PageMirror Picker] Click at iframe coords:', iframeX, iframeY);
-
-      const target = doc.elementFromPoint(iframeX, iframeY);
-      console.log('[PageMirror Picker] Click target:', target?.tagName, target);
-
-      if (!target) {
-        console.warn('[PageMirror Picker] No target found at click position');
-        return;
-      }
-
-      // Get rrweb node ID from the replayer's mirror
-      const mirror = (replayerRef.current as any)?.getMirror?.();
-      console.log('[PageMirror Picker] Mirror exists:', !!mirror, 'getId exists:', !!mirror?.getId);
-
-      if (!mirror || !mirror.getId) {
-        console.warn('[PageMirror Picker] Replayer mirror not available');
-        return;
-      }
-
-      const nodeId = mirror.getId(target);
-      console.log('[PageMirror Picker] Element rrweb nodeId:', nodeId);
-
+      const mirror = replayerRef.current?.getMirror?.();
+      const nodeId = mirror?.getId(target as Node) ?? -1;
       if (nodeId && nodeId !== -1) {
-        console.log('[PageMirror Picker] ✓ Picked element with rrweb ID:', nodeId, target.tagName);
         setSelectedNode(nodeId);
-        useStore.getState().setPickerActive(false);
-    } else {
-        console.warn('[PageMirror Picker] Invalid nodeId:', nodeId);
       }
+      useStore.getState().setPickerActive(false);
     };
 
-    // Attach to container, not iframe
-    container.addEventListener('mousemove', onMouseMove);
-    container.addEventListener('click', onClick, true);
-    container.style.cursor = 'crosshair';
-
-    console.log('[PageMirror Picker] ✓ Events attached to container');
+    // Listen on the wrapper (which contains the iframe) at capture phase so we
+    // intercept before the replayed page can swallow the event.
+    const wrapper = replayerRef.current.wrapper ?? iframe.parentElement ?? iframe;
+    wrapper.addEventListener('mousemove', onMouseMove, true);
+    wrapper.addEventListener('click', onClick, true);
+    (wrapper as HTMLElement).style.cursor = 'crosshair';
 
     return () => {
-      console.log('[PageMirror Picker] Cleanup - removing events');
-      container.removeEventListener('mousemove', onMouseMove);
-      container.removeEventListener('click', onClick, true);
-      container.style.cursor = '';
-      updateOverlay(null);
-      hoveredElementRef.current = null;
+      wrapper.removeEventListener('mousemove', onMouseMove, true);
+      wrapper.removeEventListener('click', onClick, true);
+      (wrapper as HTMLElement).style.cursor = '';
+      positionOverlay(hoverOverlayRef.current, null);
     };
-  }, [pickerActive, ready, updateOverlay, setSelectedNode]);
+  }, [pickerActive, ready, positionOverlay, setSelectedNode]);
 
+  // ── Reverse highlight: selected node (from tree/picker) → box in mirror ───
+  useEffect(() => {
+    if (!ready || !replayerRef.current || selectedNodeId == null) {
+      positionOverlay(selectOverlayRef.current, null);
+      return;
+    }
+    const mirror = replayerRef.current.getMirror?.();
+    const node = mirror?.getNode(selectedNodeId) as Element | null;
+    positionOverlay(selectOverlayRef.current, node ?? null);
+  }, [selectedNodeId, ready, rrwebEvents, positionOverlay]);
+
+  // ── Feed rrweb events into the Replayer ───────────────────────────────────
   useEffect(() => {
     const events = rrwebEvents;
     if (events.length === 0) {
@@ -213,7 +158,6 @@ export default function PageMirror(): React.ReactElement {
               // ignore
             }
             replayerRef.current = null;
-            containerRef.current.innerHTML = '';
           }
 
           const initEvents = events.slice(0, processedCountRef.current + newEvents.indexOf(event) + 1);
@@ -224,6 +168,7 @@ export default function PageMirror(): React.ReactElement {
               skipInactive: false,
               showWarning: false,
               showDebug: false,
+              mouseTail: false,
               blockClass: '__rrweb_noop__',
             });
             const baseTs = (initEvents[0] as { timestamp?: number })?.timestamp;
@@ -246,9 +191,6 @@ export default function PageMirror(): React.ReactElement {
   }, [resetReplayer, rrwebEvents]);
 
   useEffect(() => resetReplayer, [resetReplayer]);
-
-  const systemInfo = useStore((s) => s.systemInfo);
-  const vp = systemInfo?.viewport;
 
   return (
     <div
@@ -280,29 +222,43 @@ export default function PageMirror(): React.ReactElement {
           {vp && <span style={{ fontSize: 12 }}>{vp.width}×{vp.height}</span>}
         </div>
       )}
-      <ScaleContainer vpWidth={vp?.width} vpHeight={vp?.height}>
+      <ScaleContainer
+        vpWidth={vp?.width}
+        vpHeight={vp?.height}
+        onScale={(s) => {
+          scaleRef.current = s;
+        }}
+      >
+        {/* rrweb mounts its iframe inside this node */}
+        <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }} />
+        {/* Hover highlight (picker mode) */}
         <div
-          ref={containerRef}
+          ref={hoverOverlayRef}
           style={{
-            width: '100%',
-            height: '100%',
-            position: 'relative'
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            display: 'none',
+            pointerEvents: 'none',
+            border: '1px solid rgba(79, 195, 247, 0.9)',
+            background: 'rgba(79, 195, 247, 0.25)',
+            zIndex: 999998,
           }}
-        >
-          {/* Picker overlay */}
-          <div
-            ref={overlayRef}
-            style={{
-              position: 'absolute',
-              display: 'none',
-              pointerEvents: 'none',
-              border: '2px solid var(--accent-blue)',
-              background: 'rgba(79, 195, 247, 0.1)',
-              zIndex: 999999,
-              transition: 'all 100ms ease',
-            }}
-          />
-        </div>
+        />
+        {/* Selected element highlight */}
+        <div
+          ref={selectOverlayRef}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            display: 'none',
+            pointerEvents: 'none',
+            outline: '2px solid var(--accent-orange)',
+            background: 'rgba(255, 140, 0, 0.12)',
+            zIndex: 999999,
+          }}
+        />
       </ScaleContainer>
     </div>
   );
@@ -312,10 +268,12 @@ function ScaleContainer({
   children,
   vpWidth,
   vpHeight,
+  onScale,
 }: {
   children: React.ReactNode;
   vpWidth?: number;
   vpHeight?: number;
+  onScale: (scale: number) => void;
 }): React.ReactElement {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = React.useState(1);
@@ -329,12 +287,14 @@ function ScaleContainer({
       const padding = 24;
       const scaleX = Math.max(0, width - padding) / vpWidth;
       const scaleY = Math.max(0, height - padding) / vpHeight;
-      setScale(Math.min(scaleX, scaleY, 1));
+      const next = Math.min(scaleX, scaleY, 1);
+      setScale(next);
+      onScale(next);
     });
 
     obs.observe(wrapRef.current);
     return () => obs.disconnect();
-  }, [vpWidth, vpHeight]);
+  }, [vpWidth, vpHeight, onScale]);
 
   const shellWidth = vpWidth ? vpWidth * scale : undefined;
   const shellHeight = vpHeight ? vpHeight * scale : undefined;
@@ -353,8 +313,10 @@ function ScaleContainer({
         padding: 12,
       }}
     >
+      {/* Scaled stage: iframe + overlays share this transformed coordinate space */}
       <div
         style={{
+          position: 'relative',
           width: shellWidth ? `${shellWidth}px` : '100%',
           height: shellHeight ? `${shellHeight}px` : '100%',
           flex: '0 0 auto',
@@ -367,6 +329,7 @@ function ScaleContainer({
             transform: `scale(${scale})`,
             width: vpWidth ? `${vpWidth}px` : '100%',
             height: vpHeight ? `${vpHeight}px` : '100%',
+            position: 'relative',
           }}
         >
           {children}
