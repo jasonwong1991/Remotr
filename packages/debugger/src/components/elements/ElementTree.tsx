@@ -29,8 +29,24 @@ function attrString(attrs?: Record<string, string | number | boolean | null>): s
   return Object.entries(attrs)
     .filter(([k]) => !k.startsWith('_'))
     .slice(0, 5)
-    .map(([k, v]) => `${k}="${String(v ?? '').slice(0, 40)}"`)
+    .map(([k, v]) => {
+      let val = String(v ?? '');
+      if (val.length > 60) val = val.slice(0, 60) + '…';
+      return `${k}="${val}"`;
+    })
     .join(' ');
+}
+
+/** Find the id of the first <body> element in the snapshot tree, if any. */
+function findBodyId(node: RrwebNode): number | null {
+  if (node.type === NODE_TYPE.Element && node.tagName?.toLowerCase() === 'body') {
+    return node.id;
+  }
+  for (const child of node.childNodes ?? []) {
+    const found = findBodyId(child);
+    if (found != null) return found;
+  }
+  return null;
 }
 
 /** Find the chain of node IDs from root down to `targetId` (inclusive). */
@@ -108,7 +124,7 @@ function DomNode({
   const expanded = expandedIds.has(node.id);
 
   return (
-    <div style={{ paddingLeft: depth * 12, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, whiteSpace: 'nowrap' }}>
       <span
         ref={isSelected ? selectedRef : undefined}
         onClick={(e) => {
@@ -118,17 +134,17 @@ function DomNode({
         }}
         style={{
           cursor: 'pointer',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 2,
+          display: 'inline-block',
+          paddingLeft: depth * 12,
+          paddingRight: 6,
           background: isSelected ? 'var(--accent-blue)' : 'transparent',
           color: isSelected ? '#fff' : undefined,
-          padding: '2px 4px',
           borderRadius: 2,
+          lineHeight: '18px',
         }}
       >
         {hasChildren && (
-          <span style={{ color: isSelected ? '#fff' : 'var(--text-muted)', fontSize: 10 }}>{expanded ? '▾' : '▸'}</span>
+          <span style={{ color: isSelected ? '#fff' : 'var(--text-muted)', fontSize: 10, marginRight: 2 }}>{expanded ? '▾' : '▸'}</span>
         )}
         <span style={{ color: isSelected ? '#fff' : 'var(--accent-blue)' }}>{'<'}{tag}</span>
         {attrs && <span style={{ color: isSelected ? '#fff' : 'var(--accent-yellow)' }}> {attrs}</span>}
@@ -152,7 +168,7 @@ function DomNode({
               selectedRef={selectedRef}
             />
           ))}
-          <div style={{ paddingLeft: 0 }}>
+          <div style={{ paddingLeft: depth * 12, whiteSpace: 'nowrap' }}>
             <span style={{ color: 'var(--accent-blue)' }}>{'</'}{tag}{'>'}</span>
           </div>
         </>
@@ -172,6 +188,7 @@ export default function ElementTree({ rootNode }: ElementTreeProps): React.React
   // Collapsed by default — only the explicitly expanded ids are open.
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
   const selectedRef = useRef<HTMLSpanElement>(null);
+  const bodyExpandedRef = useRef(false);
 
   const toggle = (id: number) => {
     setExpandedIds((prev) => {
@@ -181,6 +198,16 @@ export default function ElementTree({ rootNode }: ElementTreeProps): React.React
       return next;
     });
   };
+
+  // Default-expand the <body> element once, when the snapshot first arrives.
+  useEffect(() => {
+    if (bodyExpandedRef.current || rootNode == null) return;
+    const bodyId = findBodyId(rootNode);
+    if (bodyId != null) {
+      bodyExpandedRef.current = true;
+      setExpandedIds((prev) => new Set(prev).add(bodyId));
+    }
+  }, [rootNode]);
 
   // When a node is selected externally (picker), expand the path to it.
   const pathToSelected = useMemo(() => {
@@ -221,16 +248,18 @@ export default function ElementTree({ rootNode }: ElementTreeProps): React.React
   }
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', padding: '8px 4px' }}>
-      <DomNode
-        node={rootNode}
-        depth={0}
-        expandedIds={expandedIds}
-        toggle={toggle}
-        selectedNodeId={selectedNodeId}
-        setSelectedNode={setSelectedNode}
-        selectedRef={selectedRef}
-      />
+    <div style={{ height: '100%', overflow: 'auto', padding: '8px 4px' }}>
+      <div style={{ display: 'inline-block', minWidth: '100%' }}>
+        <DomNode
+          node={rootNode}
+          depth={0}
+          expandedIds={expandedIds}
+          toggle={toggle}
+          selectedNodeId={selectedNodeId}
+          setSelectedNode={setSelectedNode}
+          selectedRef={selectedRef}
+        />
+      </div>
     </div>
   );
 }
