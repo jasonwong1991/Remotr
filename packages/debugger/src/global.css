@@ -65,10 +65,12 @@ html, body, #root {
 }
 
 body {
+  margin: 0;
+  padding: 0;
   background: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
@@ -93,16 +95,16 @@ body {
 .text-warn  { color: var(--accent-yellow); }
 .text-info  { color: var(--accent-blue); }
 .text-muted { color: var(--text-muted); }
-.text-mono  { font-family: var(--font-mono); font-size: 12px; }
+.text-mono  { font-family: var(--font-mono); font-size: 13px; }
 
 button {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 3px;
-  padding: 3px 10px;
+  padding: 4px 12px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   font-family: var(--font-sans);
   font-weight: 500;
 }
@@ -115,8 +117,8 @@ input[type="text"] {
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 3px;
-  padding: 3px 8px;
-  font-size: 12px;
+  padding: 4px 8px;
+  font-size: 14px;
   font-family: var(--font-sans);
   outline: none;
 }
@@ -127,13 +129,13 @@ input[type="text"]:focus {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 13px;
 }
 th {
   background: var(--bg-secondary);
   color: var(--text-secondary);
   text-align: left;
-  padding: 4px 8px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
@@ -142,7 +144,7 @@ th {
   font-size: 12px;
 }
 td {
-  padding: 3px 8px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;
