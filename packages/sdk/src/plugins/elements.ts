@@ -136,6 +136,7 @@ export function installElements(transport: Transport): void {
 
   // 处理启动元素选择器命令
   transport.onCommand('elements.startPicker', () => {
+    console.log('[remotr] elements.startPicker command received');
     picker.start();
     return { ok: true };
   });

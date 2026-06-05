@@ -31,7 +31,7 @@ interface SessionViewProps {
 export default function SessionView({ room, deviceId, pageId, onBack }: SessionViewProps): React.ReactElement {
   const connStatus = useStore((s) => s.connStatus);
   const systemInfo = useStore((s) => s.systemInfo);
-  const [activeTab, setActiveTab] = useState<Tab>('console');
+  const [activeTab, setActiveTab] = useState<Tab>('elements');
   const [reloadPending, setReloadPending] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
 
@@ -85,7 +85,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
     };
   }, [onMouseMove, onMouseUp]);
 
-  const tabs: Tab[] = ['console', 'network', 'elements', 'storage'];
+  const tabs: Tab[] = ['elements', 'console', 'network', 'storage'];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>

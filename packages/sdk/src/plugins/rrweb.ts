@@ -1,15 +1,17 @@
 import { record } from 'rrweb';
 import type { Transport } from '../transport.js';
 
-// Store rrweb mirror for ID mapping
-let _mirror: any | null = null;
-
 /**
  * Get the rrweb mirror instance for node ID lookups.
- * Returns null if rrweb has not been initialized yet.
+ * The mirror is a static property on the record function.
  */
 export function getMirror(): any | null {
-  return _mirror;
+  try {
+    // Access mirror as static property on record function
+    return (record as any).mirror || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -18,13 +20,13 @@ export function getMirror(): any | null {
  */
 export function installRrweb(transport: Transport): void {
   try {
-    const stopFn = record({
+    record({
       emit(event, isCheckout) {
         try {
           transport.send('dom.rrweb', { event, isCheckout });
-      } catch {
+        } catch {
           /* ignore */
-        }
+      }
       },
       sampling: {
         mousemove: 50,
@@ -36,10 +38,6 @@ export function installRrweb(transport: Transport): void {
       recordCanvas: false,
       collectFonts: false,
     });
-
-    // Capture mirror from rrweb's record function return value
-    // rrweb returns a function with mirror attached
-    _mirror = (stopFn as any).mirror || null;
   } catch (err) {
     // rrweb 初始化失败不应阻断其他采集功能
     console.warn('[remotr] rrweb record failed:', err);

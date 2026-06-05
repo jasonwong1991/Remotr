@@ -6,9 +6,9 @@
   --bg-hover: #3a3d41;
   --bg-selected: #094771;
   --border: #3c3c3c;
-  --text-primary: #d4d4d4;
-  --text-secondary: #858585;
-  --text-muted: #6b6b6b;
+  --text-primary: #e4e4e4;
+  --text-secondary: #a8a8a8;
+  --text-muted: #7a7a7a;
   --accent-blue: #4fc3f7;
   --accent-green: #4caf50;
   --accent-yellow: #ffcc02;
@@ -68,7 +68,7 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -93,17 +93,18 @@ body {
 .text-warn  { color: var(--accent-yellow); }
 .text-info  { color: var(--accent-blue); }
 .text-muted { color: var(--text-muted); }
-.text-mono  { font-family: var(--font-mono); }
+.text-mono  { font-family: var(--font-mono); font-size: 12px; }
 
 button {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 3px;
-  padding: 2px 8px;
+  padding: 3px 10px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-sans);
+  font-weight: 500;
 }
 button:hover {
   background: var(--bg-hover);
@@ -114,8 +115,8 @@ input[type="text"] {
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 3px;
-  padding: 2px 6px;
-  font-size: 11px;
+  padding: 3px 8px;
+  font-size: 12px;
   font-family: var(--font-sans);
   outline: none;
 }
@@ -126,21 +127,22 @@ input[type="text"]:focus {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 th {
   background: var(--bg-secondary);
   color: var(--text-secondary);
   text-align: left;
-  padding: 3px 8px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
-  font-weight: 400;
+  font-weight: 500;
   white-space: nowrap;
+  font-size: 12px;
 }
 td {
-  padding: 2px 8px;
+  padding: 3px 8px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;

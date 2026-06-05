@@ -18,16 +18,21 @@ export class ElementPicker {
    * 启动元素选择器模式
    */
   start(): void {
-    if (this.active) return;
+    if (this.active) {
+      console.log('[remotr] ElementPicker.start() called but already active');
+      return;
+    }
+    console.log('[remotr] ElementPicker.start() - activating picker');
     this.active = true;
 
     // 添加事件监听器（捕获阶段，优先级最高）
-    document.addEventListener('mousemove', this.onMouseMove, true);
+  document.addEventListener('mousemove', this.onMouseMove, true);
     document.addEventListener('click', this.onClick, true);
     document.addEventListener('keydown', this.onKeyDown, true);
 
     // 改变光标样式
     document.body.style.cursor = 'crosshair';
+    console.log('[remotr] ElementPicker - events bound, cursor set to crosshair');
   }
 
   /**
@@ -57,7 +62,7 @@ export class ElementPicker {
 
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement;
     if (el && !el.hasAttribute('data-remotr-overlay')) {
-      this.overlay.show(el);
+    this.overlay.show(el);
     }
   };
 
@@ -65,13 +70,17 @@ export class ElementPicker {
    * 点击事件处理
    */
   private onClick = (e: MouseEvent): void => {
-    if (!this.active) return;
+    if (!this.active) {
+      console.log('[remotr] ElementPicker.onClick - picker not active');
+      return;
+    }
 
+    console.log('[remotr] ElementPicker.onClick - element clicked');
     e.preventDefault();
     e.stopPropagation();
-
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement;
     if (el && !el.hasAttribute('data-remotr-overlay')) {
+      console.log('[remotr] ElementPicker - picked element:', el.tagName, el.className);
       this.onPick(el);
       this.stop();
     }
