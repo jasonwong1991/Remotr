@@ -1,14 +1,15 @@
+import { getMirror } from './rrweb.js';
+
 /**
  * ElementRegistry: Maintains mapping between rrweb node IDs and live DOM elements.
- * Phase 1: Simple sequential ID assignment via DOM traversal.
+ * Uses rrweb's mirror API for accurate ID mapping, with fallback to manual traversal.
  */
 export class ElementRegistry {
   private map: Map<number, HTMLElement> = new Map();
 
   /**
    * Rebuild the registry by walking the DOM tree and assigning sequential IDs.
-   * This is a simplified heuristic for Phase 1 - actual rrweb ID mapping
-   * would require coordination with rrweb's internal ID assignment.
+   * This is a fallback for when rrweb mirror is not available.
    */
   rebuild(): void {
     this.map.clear();
@@ -26,15 +27,34 @@ export class ElementRegistry {
     };
 
     if (document.documentElement) {
-      walk(document.documentElement);
+    walk(document.documentElement);
     }
   }
 
   /**
    * Resolve an rrweb node ID to its corresponding HTMLElement.
+   * First attempts to use rrweb's mirror, then falls back to internal map.
    * Returns null if the ID is not found or the element has been detached.
    */
   resolve(rrwebId: number): HTMLElement | null {
+    // Try rrweb mirror first
+    const mirror = getMirror();
+  if (mirror && mirror.getNode) {
+      try {
+        const node = mirror.getNode(rrwebId);
+     if (node && node.nodeType === Node.ELEMENT_NODE) {
+          const element = node as HTMLElement;
+          // Verify it's still attached
+          if (document.contains(element)) {
+            return element;
+          }
+        }
+      } catch {
+      // Fall through to map lookup
+      }
+    }
+
+    // Fallback to internal map
     const element = this.map.get(rrwebId);
     if (!element) return null;
 
@@ -42,7 +62,7 @@ export class ElementRegistry {
     if (!document.contains(element)) {
       // Clean up detached element
       this.map.delete(rrwebId);
-      return null;
+    return null;
     }
 
     return element;
@@ -67,12 +87,27 @@ export class ElementRegistry {
 
   /**
    * Get the rrweb ID for a given HTMLElement (reverse lookup).
-   * Returns undefined if the element is not in the registry.
+   * Uses rrweb's mirror API for accurate mapping.
+   * Returns undefined if the element is not in rrweb's tracking.
    */
   getRrwebId(element: HTMLElement): number | undefined {
+    // Try rrweb mirror first
+    const mirror = getMirror();
+    if (mirror && mirror.getId) {
+      try {
+        const id = mirror.getId(element);
+        if (id !== undefined && id !== -1) {
+          return id;
+        }
+      } catch {
+        // Fall through to map lookup
+      }
+    }
+
+    // Fallback to reverse lookup in internal map
     for (const [id, el] of this.map.entries()) {
       if (el === element) {
-      return id;
+        return id;
       }
     }
     return undefined;
