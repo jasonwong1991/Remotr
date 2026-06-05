@@ -1,6 +1,7 @@
 import type { Transport } from '../transport.js';
 import { serialize } from '../serializer.js';
 import { SDK_VERSION } from '../version.js';
+import { buildSessionMetadata } from '../session.js';
 
 /**
  * Page 插件：上报系统信息，并处理 eval.run / page.reload 命令。
@@ -33,14 +34,30 @@ export function installPage(transport: Transport): void {
 
 function sendSystemInfo(transport: Transport): void {
   try {
-    transport.send('system.info', {
+    const systemInfo = {
       ua: navigator.userAgent,
       url: location.href,
       title: document.title,
       viewport: { width: window.innerWidth, height: window.innerHeight },
       framework: detectFramework(),
       sdkVersion: SDK_VERSION,
-    });
+    };
+
+    transport.send('system.info', systemInfo);
+
+    // 构建并设置 session metadata
+    const metadata = buildSessionMetadata(
+      transport.getSessionId(),
+      transport.getIdentity(),
+      {
+        ua: systemInfo.ua,
+        url: systemInfo.url,
+        title: systemInfo.title,
+        platform: navigator.platform,
+      }
+    );
+
+    transport.setSessionMetadata(metadata);
   } catch {
     /* ignore */
   }

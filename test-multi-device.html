@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multi-Device Test - Remotr</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    .test-section {
+      background: #f5f5f5;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 8px;
+    }
+    h2 { color: #333; }
+    code {
+      background: #e0e0e0;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Monaco', 'Menlo', monospace;
+    }
+    button {
+      background: #4caf50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover { background: #45a049; }
+    .info {
+      background: #e3f2fd;
+      padding: 15px;
+      border-left: 4px solid #2196f3;
+      margin: 15px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔍 Remotr Multi-Device Session Test</h1>
+
+  <div class="info">
+    <strong>测试说明：</strong>
+    <ul>
+      <li>此页面演示多设备、多页面、多身份的会话隔离功能</li>
+      <li>打开多个标签页或不同浏览器，每个都会获得唯一的 session ID</li>
+      <li>设置 cookie 后刷新页面，会按用户名分组</li>
+    </ul>
+  </div>
+
+  <div class="test-section">
+    <h2>📱 当前 Session 信息</h2>
+    <p>Device ID: <code id="device-id">加载中...</code></p>
+    <p>Page ID: <code id="page-id">加载中...</code></p>
+    <p>Identity: <code id="identity">未设置</code></p>
+    <p>User Agent: <code id="ua">...</code></p>
+  </div>
+
+  <div class="test-section">
+    <h2>🧪 测试操作</h2>
+    <button onclick="testConsole()">输出 Console 日志</button>
+    <button onclick="testNetwork()">发起网络请求</button>
+    <button onclick="testStorage()">操作 LocalStorage</button>
+    <button onclick="testError()">触发错误</button>
+  </div>
+
+  <div class="test-section">
+    <h2>👤 设置身份标识</h2>
+    <p>设置 cookie 后刷新页面，调试面板会按用户分组显示</p>
+    <input type="text" id="username-input" placeholder="输入用户名" value="alice">
+    <button onclick="setIdentity()">设置身份并刷新</button>
+    <button onclick="clearIdentity()">清除身份</button>
+  </div>
+
+  <script>
+    // 显示当前 session 信息
+    function displaySessionInfo() {
+      try {
+        const deviceId = localStorage.getItem('__remotr_device_id') || '未生成';
+        const pageId = sessionStorage.getItem('__remotr_page_id') || '未生成';
+        const username = getCookie('username') || '未设置';
+
+        document.getElementById('device-id').textContent = deviceId;
+        document.getElementById('page-id').textContent = pageId;
+        document.getElementById('identity').textContent = username;
+        document.getElementById('ua').textContent = navigator.userAgent.substring(0, 80) + '...';
+      } catch (e) {
+        console.error('Failed to display session info:', e);
+      }
+    }
+
+    function getCookie(name) {
+      const cookies = document.cookie.split(';');
+      for (const item of cookies) {
+        const [key, value] = item.trim().split('=');
+        if (key === name) return decodeURIComponent(value);
+      }
+      return null;
+    }
+
+    function setCookie(name, value, days = 7) {
+      const expires = new Date(Date.now() + days * 864e5).toUTCString();
+      document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+    }
+
+    function setIdentity() {
+      const username = document.getElementById('username-input').value.trim();
+      if (!username) {
+        alert('请输入用户名');
+        return;
+      }
+      setCookie('username', username);
+      alert(`身份已设置为: ${username}\n页面即将刷新以应用更改`);
+      setTimeout(() => location.reload(), 500);
+    }
+
+    function clearIdentity() {
+      document.cookie = 'username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/';
+      alert('身份已清除\n页面即将刷新');
+      setTimeout(() => location.reload(), 500);
+    }
+
+    // 测试函数
+    function testConsole() {
+      console.log('✅ 这是一条普通日志');
+      console.info('ℹ️ 这是一条信息日志');
+      console.warn('⚠️ 这是一条警告日志');
+      console.error('❌ 这是一条错误日志');
+      console.log('Device:', localStorage.getItem('__remotr_device_id'));
+      console.log('Page:', sessionStorage.getItem('__remotr_page_id'));
+    }
+
+    function testNetwork() {
+      fetch('https://api.github.com/repos/rrweb-io/rrweb')
+        .then(res => res.json())
+        .then(data => console.log('✅ Network test:', data.name, data.stargazers_count, 'stars'))
+        .catch(err => console.error('❌ Network error:', err));
+    }
+
+    function testStorage() {
+      const key = 'test_key_' + Date.now();
+      const value = 'test_value_' + Math.random().toString(36).substring(7);
+      localStorage.setItem(key, value);
+      console.log('✅ LocalStorage written:', key, '=', value);
+    }
+
+    function testError() {
+      throw new Error('🔥 This is a test error from ' + sessionStorage.getItem('__remotr_page_id'));
+    }
+
+    // 页面加载时显示信息
+    displaySessionInfo();
+  </script>
+
+  <!-- Remotr SDK 注入：支持按 cookie 中的 username 分组 -->
+  <script src="http://localhost:9777/remotr.js" data-room="default" data-identity-cookie="username"></script>
+</body>
+</html>

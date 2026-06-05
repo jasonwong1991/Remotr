@@ -65,8 +65,16 @@ export function startServer(opts: ServerOptions) {
 function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
   const roomId = url.searchParams.get('room') || 'default';
   const role = url.searchParams.get('role') === 'sdk' ? 'sdk' : 'debugger';
+
+  // 提取 session 参数（SDK 端会发送这些参数）
+  const sessionParams = {
+    deviceId: url.searchParams.get('deviceId') || undefined,
+    pageId: url.searchParams.get('pageId') || undefined,
+    identity: url.searchParams.get('identity') || undefined,
+  };
+
   const room = rooms.get(roomId);
-  const member = room.add(ws, role);
+  const member = room.add(ws, role, sessionParams);
 
   // 调试端接入：回放 backlog 重建当前状态
   if (role === 'debugger') {

@@ -4,6 +4,30 @@ import type { BoxModel, ComputedStyles, CSSRule } from './elements-types.js';
 /** 连接角色 */
 export type Role = 'sdk' | 'debugger';
 
+/** Session 标识（设备 + 页面） */
+export interface SessionId {
+  deviceId: string;
+  pageId: string;
+}
+
+/** Session 元数据 */
+export interface SessionMetadata {
+  session: SessionId;
+  /** 可选身份标识，例如从 cookie 读取的 username / userId */
+  identity?: string;
+  /** 设备展示信息 */
+  device?: {
+    label?: string;
+    ua?: string;
+    platform?: string;
+  };
+  /** 页面展示信息 */
+  page?: {
+    url: string;
+    title: string;
+  };
+}
+
 /**
  * 消息信封 — 所有 WebSocket 消息共用的统一结构。
  * - id 为 null：单向事件（无需响应）
@@ -15,6 +39,10 @@ export interface Envelope<M extends MethodName = MethodName> {
   data: MethodData[M];
   timestamp: number;
   source: Role;
+  /** SDK → Server/Debugger 消息携带来源 session 信息 */
+  metadata?: SessionMetadata;
+  /** Debugger → SDK 命令携带目标 session */
+  target?: SessionId;
 }
 
 /** 命令回复信封 */

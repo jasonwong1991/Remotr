@@ -1,10 +1,18 @@
 import type { WebSocket } from 'ws';
-import type { Frame } from '@remotr/shared';
+import type { Frame, SessionId } from '@remotr/shared';
 import { encodeFrame } from '@remotr/shared';
+
+interface SessionParams {
+  deviceId?: string;
+  pageId?: string;
+  identity?: string;
+}
 
 interface Member {
   ws: WebSocket;
   role: 'sdk' | 'debugger';
+  /** SDK 端连接会携带 session 信息 */
+  session?: SessionParams;
 }
 
 /**
@@ -49,8 +57,8 @@ export class Room {
     return n;
   }
 
-  add(ws: WebSocket, role: 'sdk' | 'debugger'): Member {
-    const member: Member = { ws, role };
+  add(ws: WebSocket, role: 'sdk' | 'debugger', session?: SessionParams): Member {
+    const member: Member = { ws, role, session };
     this.members.add(member);
     return member;
   }

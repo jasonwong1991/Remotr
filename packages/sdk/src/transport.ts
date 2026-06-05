@@ -7,7 +7,10 @@ import {
   type MethodData,
   type MethodName,
   type Reply,
+  type SessionId,
+  type SessionMetadata,
 } from '@remotr/shared';
+import { buildSessionMetadata } from './session.js';
 
 type CommandHandler = (data: unknown) => Promise<unknown> | unknown;
 
@@ -25,12 +28,45 @@ export class Transport {
   private closedByUser = false;
   private handlers = new Map<CommandMethod, CommandHandler>();
   private connectedListeners: Array<() => void> = [];
+  private sessionId: SessionId;
+  private identity?: string;
+  private sessionMetadata: SessionMetadata | null = null;
 
-  constructor(serverUrl: string, room: string) {
+  constructor(serverUrl: string, room: string, sessionId: SessionId, identity?: string) {
     // serverUrl 形如 http(s)://host:port，转为 ws(s)://host:port/ws
     const u = new URL(serverUrl);
     const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.url = `${wsProto}//${u.host}/ws?room=${encodeURIComponent(room)}&role=sdk`;
+
+    // WebSocket URL 包含 session 信息
+    const params = new URLSearchParams({
+      room,
+      role: 'sdk',
+      deviceId: sessionId.deviceId,
+      pageId: sessionId.pageId,
+    });
+
+    if (identity) {
+      params.set('identity', identity);
+    }
+
+    this.url = `${wsProto}//${u.host}/ws?${params.toString()}`;
+    this.sessionId = sessionId;
+    this.identity = identity;
+  }
+
+  /** 设置 session 元数据（由 page plugin 在收集 systemInfo 后调用） */
+  setSessionMetadata(metadata: SessionMetadata): void {
+    this.sessionMetadata = metadata;
+  }
+
+  /** 获取 session ID */
+  getSessionId(): SessionId {
+    return this.sessionId;
+  }
+
+  /** 获取身份标识 */
+  getIdentity(): string | undefined {
+    return this.identity;
   }
 
   connect(): void {
@@ -94,7 +130,14 @@ export class Transport {
   send<M extends MethodName>(method: M, data: MethodData[M]): void {
     const frame: Frame = {
       kind: 'msg',
-      envelope: makeEnvelope(method, data, 'sdk'),
+      envelope: makeEnvelope(
+        method,
+        data,
+        'sdk',
+        null,
+        Date.now(),
+        this.sessionMetadata ?? undefined,
+      ),
     };
     this.raw(encodeFrame(frame));
   }
