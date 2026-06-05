@@ -91,17 +91,48 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
   }
 
   ws.on('message', (raw: Buffer | string) => {
-    const text = typeof raw === 'string' ? raw : raw.toString('utf-8');
-    const frame = decodeFrame(text);
-    if (!frame) return;
-    room.route(member, frame, text);
+    try {
+      const text = typeof raw === 'string' ? raw : raw.toString('utf-8');
+      const frame = decodeFrame(text);
+
+      if (!frame) {
+        console.warn(`[Security] Invalid frame from ${member.role} ${member.role === 'sdk' ? `${member.session.deviceId}:${member.session.pageId}` : member.targetSession ? `${member.targetSession.deviceId}:${member.targetSession.pageId}` : 'dashboard'}`);
+        return;
+      }
+
+      // Validate frame structure
+      if (frame.kind === 'msg') {
+        if (!frame.envelope || typeof frame.envelope.method !== 'string') {
+          console.warn(`[Security] Malformed envelope from ${member.role}`);
+          return;
+        }
+
+        // Validate known methods
+        const validMethods = [
+          'system.info', 'console.entry', 'network.request', 'network.requestBody',
+          'network.response', 'network.responseBody', 'storage.set', 'storage.delete',
+          'storage.clear', 'dom.rrweb', 'elements.picked', 'eval.run'
+        ];
+
+        const methodPrefix = frame.envelope.method.split('.')[0];
+        if (!validMethods.some(m => m.startsWith(methodPrefix))) {
+          console.warn(`[Security] Unknown method '${frame.envelope.method}' from ${member.role}`);
+          // Don't return - allow forward compatibility with new methods
+        }
+      }
+
+      room.route(member, frame, text);
+    } catch (err) {
+      console.error(`[Security] Frame processing error from ${member.role}:`, err);
+    }
   });
 
   const cleanup = () => {
     room.remove(member);
     // 通知 Dashboard 更新（SDK 离开时）
     if (member.role === 'sdk') {
-      room.broadcastDashboardSnapshot();
+      // Use setImmediate to ensure removal completed
+      setImmediate(() => room.broadcastDashboardSnapshot());
     }
     if (room.size === 0 && room.getAllSessions().length === 0) {
       rooms.delete(roomId);

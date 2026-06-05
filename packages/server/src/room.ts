@@ -73,8 +73,8 @@ export class Room {
   private backlogs = new Map<string, SessionBacklog>();
   /** 离线 session 信息（保留以便 Dashboard 展示） */
   private offlineSessions = new Map<string, SessionSnapshot>();
-  /** Pending commands: commandId → Debugger（reply 路由） */
-  private pendingReplies = new Map<string, DebuggerMember>();
+  /** Pending commands: commandId → Debugger + target session（reply 路由） */
+  private pendingReplies = new Map<string, { debugger: DebuggerMember; targetSession: SessionId }>();
 
   private readonly maxBacklog: number;
   private readonly maxRrwebBacklog: number;
@@ -126,13 +126,29 @@ export class Room {
     if (member.role === 'sdk') {
       const key = sessionKey(member.session);
       this.sdks.delete(key);
+
+      // Clean up pending replies for this SDK session
+      for (const [commandId, pending] of this.pendingReplies) {
+        if (sameSession(pending.targetSession, member.session)) {
+          // Send error reply to the debugger
+          const replyFrame: Frame = {
+            kind: 'reply',
+            reply: { replyTo: commandId, error: 'SDK disconnected' },
+          };
+          if (pending.debugger.ws.readyState === pending.debugger.ws.OPEN) {
+            pending.debugger.ws.send(encodeFrame(replyFrame));
+          }
+          this.pendingReplies.delete(commandId);
+        }
+      }
+
       // 标记为离线，但保留 backlog
       this.offlineSessions.set(key, this.buildSessionSnapshot(member, false));
     } else {
       this.debuggers.delete(member);
       // 清理该 debugger 的 pending replies
-      for (const [id, dbg] of this.pendingReplies) {
-        if (dbg === member) this.pendingReplies.delete(id);
+      for (const [id, pending] of this.pendingReplies) {
+        if (pending.debugger === member) this.pendingReplies.delete(id);
       }
     }
   }
@@ -190,9 +206,9 @@ export class Room {
       this.broadcastDashboardSnapshot();
     } else if (frame.kind === 'reply') {
       // SDK 回复 → 找到原始 Debugger
-      const dbg = this.pendingReplies.get(frame.reply.replyTo);
-      if (dbg && dbg.ws.readyState === dbg.ws.OPEN) {
-        dbg.ws.send(raw);
+      const pending = this.pendingReplies.get(frame.reply.replyTo);
+      if (pending && pending.debugger.ws.readyState === pending.debugger.ws.OPEN) {
+        pending.debugger.ws.send(raw);
       }
       this.pendingReplies.delete(frame.reply.replyTo);
     }
@@ -210,6 +226,13 @@ export class Room {
       return;
     }
 
+    // Authorization check: debugger can only control their targetSession
+    if (from.targetSession && !sameSession(from.targetSession, target)) {
+      console.warn('[Room] Debugger attempted to control unauthorized session');
+      this.replyError(from, frame, 'Not authorized to control this session');
+      return;
+    }
+
     const key = sessionKey(target);
     const sdk = this.sdks.get(key);
     if (!sdk || sdk.ws.readyState !== sdk.ws.OPEN) {
@@ -219,7 +242,10 @@ export class Room {
 
     // 记录 pending reply（如果是带 id 的命令）
     if (frame.envelope.id) {
-      this.pendingReplies.set(frame.envelope.id, from);
+      this.pendingReplies.set(frame.envelope.id, {
+        debugger: from,
+        targetSession: target
+      });
     }
 
     sdk.ws.send(raw);
