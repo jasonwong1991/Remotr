@@ -11,13 +11,15 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 - 🖥️ **Page Mirror** — Built on [rrweb](https://github.com/rrweb-io/rrweb) for real-time recording and replay, faithfully reconstructing the remote page (styles, DOM incremental updates)
 - 🎮 **Console** — Intercepts `console.*` + global errors/Promise rejections; supports **executing arbitrary JS** remotely (eval)
 - 🌐 **Network** — Intercepts `fetch` / `XHR` / `sendBeacon`, displaying URL/status/timing/headers/body
-- 🧬 **Elements** — Rebuilds DOM tree from rrweb snapshots
+- 🧬 **Elements** — Live DOM tree rebuilt from the rrweb mirror (hide/delete/edit reflect instantly); DevTools-style right-click menu: copy selector/XPath/JS-path/outerHTML, force pseudo-states (`:hover`/`:focus`/…), hide/edit-HTML/delete, scroll into view; inspect & edit matched rules, computed styles, and box model; element picker
 - 💾 **Storage** — View, edit, and delete localStorage / sessionStorage / Cookies (bidirectional)
 - 🔌 **Zero-config Injection** — One `<script>` tag, auto-connects with exponential backoff reconnection
 - 📦 **Single-file SDK** — Built as a single IIFE with esbuild (~60KB gzipped, includes rrweb), no dependencies needed on target page
 - 🔀 **Multi-Device/Multi-Page** — Each device and browser tab is tracked separately with persistent device IDs (localStorage) and ephemeral page IDs (sessionStorage). Perfect for debugging multiple users or testing across devices.
 - 👥 **Identity Grouping** — Use `data-identity-cookie` to group sessions by user (e.g., alice, bob). Dashboard automatically groups by identity or device for easy navigation.
 - 📊 **Dashboard UI** — Visual overview of all connected sessions at `/#/dashboard`. See real-time status, click any session to debug it.
+- 🌍 **i18n** — Built-in English / 简体中文 toggle (defaults to English)
+- 🎨 **Theme** — Dark / light mode toggle
 
 ## Architecture
 
@@ -47,7 +49,7 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 │  │ │   - DOM (rrweb)         │   │  │
 │  │ └─────────────────────────┘   │  │
 │  └───────────────┬───────────────┘  │
-│                  │                   │
+│                  │                  │
 │  ┌───────────────┴───────────────┐  │
 │  │ Device B / Page 2             │  │
 │  │ ┌─────────────────────────┐   │  │
@@ -56,8 +58,8 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 │  │ │ • pageId: page_uvw456   │   │  │
 │  │ └─────────────────────────┘   │  │
 │  └───────────────┬───────────────┘  │
-│                  │                   │
-└──────────────────┼───────────────────┘
+│                  │                  │
+└──────────────────┼──────────────────┘
                    │
                    │ Events with SessionMetadata
                    ▼
@@ -69,14 +71,14 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 │  Debugger:  ?role=debugger&deviceId=X&pageId=Y  (Session mode)                  │
 │  Dashboard: ?role=debugger  (Dashboard mode)                                    │
 │                                                                                 │
-│  ┌────────────────────────────────────────────────────────────────────────┐   │
-│  │  Per-Session Backlog Storage                                           │   │
-│  │  dev_abc123:page_xyz789 → [rrweb + events]                             │   │
-│  │  dev_def456:page_uvw456 → [rrweb + events]                             │   │
-│  └────────────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────────────┐   │
+│  │  Per-Session Backlog Storage                                             │   │
+│  │  dev_abc123:page_xyz789 → [rrweb + events]                               │   │
+│  │  dev_def456:page_uvw456 → [rrweb + events]                               │   │
+│  └──────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                 │
-│  Routing: SDK → Subscribed Debuggers | Debugger → Target SDK                   │
-└────────────────────────────────────┬───────────────────────────────────────────┘
+│  Routing: SDK → Subscribed Debuggers | Debugger → Target SDK                    │
+└────────────────────────────────────┬────────────────────────────────────────────┘
                    ┌─────────────────┴─────────────────┐
                    │                                   │
                    ▼                                   ▼
@@ -94,13 +96,13 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
                                         └───────────────────────────────┘
 ```
 
-Three packages sharing a typed protocol via `@remotr/shared`:
+Four packages sharing a typed protocol via `@remotr/shared`:
 
-| Package | Description |
-|---------|-------------|
-| `packages/shared` | Protocol definitions, message envelopes, SpyAtom serialization types (single source of truth) |
-| `packages/sdk` | Injection SDK (TypeScript → esbuild IIFE single file) |
-| `packages/server` | Relay server (Node + ws), hosts panel and injection script |
+| Package             | Description |
+|---------------------|-------------|
+| `packages/shared`   | Protocol definitions, message envelopes, SpyAtom serialization types (single source of truth) |
+| `packages/sdk`      | Injection SDK (TypeScript → esbuild IIFE single file) |
+| `packages/server`   | Relay server (Node + ws), hosts panel and injection script |
 | `packages/debugger` | Debug panel (React + Vite + Zustand + rrweb Replayer) |
 
 ## Quick Start
@@ -184,6 +186,23 @@ http://<your-IP>:9777/#/session?room=default&deviceId=xxx&pageId=yyy
 ```
 
 Click "← Dashboard" button in session view to return.
+
+## Docker Deployment
+
+Prefer containers? A multi-stage `Dockerfile` and `docker-compose.yml` are included — no local Node toolchain needed.
+
+```bash
+docker compose up -d        # Build image and start (port 9777)
+docker compose logs -f      # Follow logs
+docker compose down         # Stop and remove
+```
+
+The panel and inject script are then served just like in [Quick Start](#quick-start):
+
+- Debug panel:   `http://localhost:9777/`
+- Inject script: `http://localhost:9777/remotr.js`
+
+For cross-device access, replace `localhost` with the host IP. See **[DOCKER.md](./DOCKER.md)** for production deployment — reverse proxy, HTTPS, resource limits, and troubleshooting.
 
 ## Multi-Session Workflow
 

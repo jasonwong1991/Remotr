@@ -5,13 +5,13 @@
 ### 1. Build and Run with Docker Compose
 ```bash
 # Build and start
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop
-docker-compose down
+docker compose down
 ```
 
 ### 2. Access Remotr
@@ -50,8 +50,6 @@ ports:
 2. **With Domain Name** (recommended with nginx-proxy):
 
 ```yaml
-version: '3.8'
-
 services:
   nginx-proxy:
     image: nginxproxy/nginx-proxy
@@ -62,7 +60,7 @@ services:
       - /var/run/docker.sock:/tmp/docker.sock:ro
       - nginx-certs:/etc/nginx/certs
       - nginx-vhost:/etc/nginx/vhost.d
-    - nginx-html:/usr/share/nginx/html
+      - nginx-html:/usr/share/nginx/html
     restart: unless-stopped
 
   remotr:
@@ -90,11 +88,14 @@ volumes:
 
 ### Environment Variables
 
+The server only reads the following variables (see `packages/server/src/cli.ts`):
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `9777` | Server port |
-| `NODE_ENV` | `production` | Node environment |
-| `DEFAULT_ROOM` | `default` | Default room name |
+| `REMOTR_PORT` | `9777` | Server listen port |
+| `REMOTR_HOST` | `0.0.0.0` | Server bind address |
+
+> **Room** is chosen by the client via the `data-room` attribute / `?room=` query param — it is **not** a server-side environment variable.
 
 ### Custom Port
 
@@ -102,7 +103,7 @@ volumes:
 services:
   remotr:
     environment:
-      - PORT=8080
+      - REMOTR_PORT=8080
     ports:
       - "8080:8080"
 ```
@@ -115,28 +116,28 @@ services:
 
 ```bash
 # Build image
-docker-compose build
+docker compose build
 
 # Start in detached mode
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f remotr
+docker compose logs -f remotr
 
 # Restart
-docker-compose restart
+docker compose restart
 
 # Stop and remove containers
-docker-compose down
+docker compose down
 
 # Stop and remove with volumes
-docker-compose down -v
+docker compose down -v
 
 # Check status
-docker-compose ps
+docker compose ps
 
 # Execute command in container
-docker-compose exec remotr sh
+docker compose exec remotr sh
 ```
 
 ### Update to Latest Version
@@ -146,7 +147,7 @@ docker-compose exec remotr sh
 git pull
 
 # Rebuild and restart
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 ---
@@ -157,13 +158,13 @@ docker-compose up -d --build
 
 ```bash
 # Check logs
-docker-compose logs remotr
+docker compose logs remotr
 
 # Check if port is in use
 lsof -i :9777
 
 # Restart container
-docker-compose restart remotr
+docker compose restart remotr
 ```
 
 ### WebSocket Connection Failed
@@ -176,9 +177,9 @@ docker-compose restart remotr
 
 ```bash
 # Clean build
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
+docker compose down
+docker compose build --no-cache
+docker compose up -d
 ```
 
 ---
@@ -188,7 +189,7 @@ docker-compose up -d
 1. **Use HTTPS in production**
 2. **Configure firewall** to restrict access
 3. **Use environment variables** for sensitive config
-4. **Regular updates**: `docker-compose pull && docker-compose up -d`
+4. **Regular updates**: `docker compose up -d --build`
 
 ---
 
@@ -203,9 +204,9 @@ services:
       resources:
         limits:
           cpus: '1.0'
-       memory: 512M
+          memory: 512M
         reservations:
-       cpus: '0.5'
+          cpus: '0.5'
           memory: 256M
 ```
 
