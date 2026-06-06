@@ -15,6 +15,12 @@ export interface CSSRule {
   source: string;
   properties: Record<string, string>;
   specificity: [number, number, number];
+  /**
+   * Set when this rule only matches because a pseudo-state was force-enabled
+   * (e.g. ":hover"). Holds the comma-joined forced pseudo-classes that made it
+   * match, so the UI can label it. Absent for normally-matched rules.
+   */
+  forState?: string;
 }
 
 export interface MatchedRule extends CSSRule {}

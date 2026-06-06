@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import type { ConsoleRecord } from '../store';
 import { SpyAtomView } from '../components/SpyAtomView';
 import { sendEval } from '../ws';
+import { useT } from '../i18n';
 
 type LevelFilter = 'all' | 'log' | 'info' | 'warn' | 'error' | 'debug';
 
@@ -23,6 +24,7 @@ const LEVEL_BG: Record<string, string> = {
 };
 
 function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactElement {
+  const t = useT();
   const [stackOpen, setStackOpen] = useState(false);
   const color = LEVEL_COLORS[record.level] ?? 'var(--text-primary)';
   const bg = LEVEL_BG[record.level] ?? 'transparent';
@@ -45,7 +47,7 @@ function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactElement {
               ))}
               {record.entry.stack && (
                 <button onClick={() => setStackOpen((v) => !v)} style={{ marginLeft: 4, fontSize: 10 }}>
-                  stack {stackOpen ? '▲' : '▼'}
+                  {t('console.stack')} {stackOpen ? '▲' : '▼'}
                 </button>
               )}
             </span>
@@ -63,7 +65,7 @@ function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactElement {
               )}
               {record.pageError.stack && (
                 <button onClick={() => setStackOpen((v) => !v)} style={{ marginLeft: 4, fontSize: 10 }}>
-                  stack {stackOpen ? '▲' : '▼'}
+                  {t('console.stack')} {stackOpen ? '▲' : '▼'}
                 </button>
               )}
             </span>
@@ -104,6 +106,7 @@ export default function ConsolePanel(): React.ReactElement {
   const [evalInput, setEvalInput] = useState('');
   const [evalRunning, setEvalRunning] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   const filtered = records.filter((r) => {
     if (levelFilter !== 'all' && r.level !== levelFilter) return false;
@@ -141,7 +144,7 @@ export default function ConsolePanel(): React.ReactElement {
         display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
         background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0,
       }}>
-        <button onClick={clearConsole} title="Clear console">🚫</button>
+        <button onClick={clearConsole} title={t('console.clearTitle')}>🚫</button>
         <div style={{ display: 'flex', gap: 2 }}>
           {levels.map((l) => (
             <button
@@ -160,7 +163,7 @@ export default function ConsolePanel(): React.ReactElement {
         </div>
         <input
           type="text"
-          placeholder="Filter…"
+          placeholder={t('console.filter')}
           value={textFilter}
           onChange={(e) => setTextFilter(e.target.value)}
           style={{ flex: 1, maxWidth: 200 }}
@@ -184,11 +187,11 @@ export default function ConsolePanel(): React.ReactElement {
           value={evalInput}
           onChange={(e) => setEvalInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') handleEval(); }}
-          placeholder="Evaluate JavaScript expression…"
+          placeholder={t('console.evalPlaceholder')}
           disabled={evalRunning}
           style={{ flex: 1, fontFamily: 'var(--font-mono)' }}
         />
-        <button onClick={handleEval} disabled={evalRunning}>Run</button>
+        <button onClick={handleEval} disabled={evalRunning}>{t('common.run')}</button>
       </div>
     </div>
   );

@@ -12,6 +12,8 @@ import NetworkPanel from '../panels/NetworkPanel';
 import ElementsPanel from '../panels/ElementsPanel';
 import StoragePanel from '../panels/StoragePanel';
 import ThemeToggle from '../components/ThemeToggle';
+import LanguageToggle from '../components/LanguageToggle';
+import { useT, type MessageKey } from '../i18n';
 
 type Tab = 'console' | 'network' | 'elements' | 'storage';
 
@@ -31,6 +33,7 @@ interface SessionViewProps {
 export default function SessionView({ room, deviceId, pageId, onBack }: SessionViewProps): React.ReactElement {
   const connStatus = useStore((s) => s.connStatus);
   const systemInfo = useStore((s) => s.systemInfo);
+  const t = useT();
   const [activeTab, setActiveTab] = useState<Tab>('elements');
   const [reloadPending, setReloadPending] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
@@ -102,19 +105,20 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
           color: 'var(--text-secondary)',
         }}
       >
-        <button onClick={onBack} title="返回 Dashboard">
-          ← Dashboard
+        <button onClick={onBack} title={t('session.backTitle')}>
+          {t('session.back')}
         </button>
 
         <button
           onClick={handleReload}
           disabled={connStatus !== 'connected' || reloadPending}
-          title={reloadPending ? 'Reloading...' : 'Reload remote page (Shift+Click for hard reload)'}
+          title={reloadPending ? t('session.reloading') : t('session.reloadTitle')}
         >
-          {reloadPending ? '⟳...' : '⟳ Reload'}
+          {reloadPending ? '⟳...' : t('session.reload')}
         </button>
 
         <ThemeToggle />
+        <LanguageToggle />
 
         {reloadError && <span style={{ color: 'var(--accent-red)' }}>⚠ {reloadError}</span>}
 
@@ -128,19 +132,19 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
               display: 'inline-block',
             }}
           />
-          {connStatus}
+          {t(`status.${connStatus}` as MessageKey)}
         </span>
 
         <span style={{ color: 'var(--text-muted)' }}>|</span>
-        <span title={`Room: ${room}`} style={{ color: 'var(--text-muted)' }}>
+        <span title={`${t('dashboard.room')} ${room}`} style={{ color: 'var(--text-muted)' }}>
           {room}
         </span>
         <span style={{ color: 'var(--text-muted)' }}>·</span>
-        <span title={`Device: ${deviceId}`} style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+        <span title={`${t('session.deviceLabel')} ${deviceId}`} style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
           📱 {deviceId.slice(0, 12)}
         </span>
         <span style={{ color: 'var(--text-muted)' }}>·</span>
-        <span title={`Page: ${pageId}`} style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+        <span title={`${t('session.pageLabel')} ${pageId}`} style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
           📄 {pageId.slice(0, 12)}
         </span>
 
@@ -200,7 +204,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
               flexShrink: 0,
             }}
           >
-            Page Mirror
+            {t('session.pageMirror')}
           </div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
             <PageMirror key={`${deviceId}:${pageId}`} />
@@ -245,7 +249,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
                   textTransform: 'capitalize',
                 }}
               >
-                {tab}
+                {t(`tab.${tab}` as MessageKey)}
               </button>
             ))}
           </div>

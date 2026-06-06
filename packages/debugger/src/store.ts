@@ -42,6 +42,7 @@ export interface StorageState {
 }
 
 import type { eventWithTime } from 'rrweb';
+import type { RrwebNode } from './components/elements/domTree';
 // rrweb event
 export type RrwebEventRaw = eventWithTime;
 
@@ -58,6 +59,8 @@ interface DebuggerState {
   networkMap: Map<string, NetworkRecord>;
   storage: StorageState;
   rrwebEvents: RrwebEventRaw[];
+  /** Live Elements tree, rebuilt from the rrweb mirror by PageMirror. */
+  domTree: RrwebNode | null;
   selectedNodeId: number | null;
   selectedElementData: SelectedElementData | null;
   hoveredNodeId: number | null;
@@ -79,6 +82,7 @@ interface DebuggerState {
   applyStorageSnapshot: (snap: StorageSnapshotEvent) => void;
   applyStorageChange: (change: StorageChangeEvent) => void;
   addRrwebEvent: (event: RrwebEventRaw) => void;
+  setDomTree: (tree: RrwebNode | null) => void;
   setSelectedNode: (id: number | null) => void;
   setElementData: (data: Partial<SelectedElementData>) => void;
   clearElementData: () => void;
@@ -110,6 +114,7 @@ export const useStore = create<DebuggerState>((set) => ({
   networkMap: new Map(),
   storage: { local: {}, session: {}, cookie: {} },
   rrwebEvents: [],
+  domTree: null,
   selectedNodeId: null,
   selectedElementData: null,
   hoveredNodeId: null,
@@ -196,6 +201,8 @@ export const useStore = create<DebuggerState>((set) => ({
   addRrwebEvent: (event) =>
     set((s) => ({ rrwebEvents: [...s.rrwebEvents, event] })),
 
+  setDomTree: (domTree) => set({ domTree }),
+
   setSelectedNode: (selectedNodeId) => set({ selectedNodeId }),
 
   setElementData: (data) =>
@@ -221,6 +228,7 @@ export const useStore = create<DebuggerState>((set) => ({
       networkMap: new Map(),
       storage: { local: {}, session: {}, cookie: {} },
       rrwebEvents: [],
+      domTree: null,
       selectedNodeId: null,
       selectedElementData: null,
       hoveredNodeId: null,
@@ -237,6 +245,7 @@ export const useStore = create<DebuggerState>((set) => ({
       networkMap: new Map(),
       storage: { local: {}, session: {}, cookie: {} },
       rrwebEvents: [],
+      domTree: null,
       selectedNodeId: null,
       selectedElementData: null,
       hoveredNodeId: null,

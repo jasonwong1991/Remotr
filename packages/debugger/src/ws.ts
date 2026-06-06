@@ -262,3 +262,7 @@ export async function sendEval(code: string): Promise<SpyAtom | null> {
     return null;
   }
 }
+
+export async function deleteElement(nodeId: number): Promise<Reply> {
+  return sendCommand('elements.deleteNode', { nodeId });
+}

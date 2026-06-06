@@ -214,6 +214,12 @@ export interface ElementsGetBoxModelResult {
 
 export interface ElementsGetMatchedRulesCmd {
   nodeId: number;
+  /**
+   * Pseudo-classes to treat as force-enabled (e.g. [":hover", ":focus"]). Rules
+   * that match the element once these pseudo-classes are stripped from their
+   * selector are returned too, tagged with `forState`.
+   */
+  forcedStates?: string[];
 }
 export interface ElementsGetMatchedRulesResult {
   inlineStyles: Record<string, string>;
@@ -234,6 +240,30 @@ export interface ElementsSetStyleCmd {
 
 export interface ElementsPickedEvent {
   nodeId: number;
+}
+
+export interface ElementsDeleteNodeCmd {
+  nodeId: number;
+}
+
+export interface ElementsSetHTMLCmd {
+  nodeId: number;
+  /** 新的 outerHTML 字符串，用于替换目标元素 */
+  outerHTML: string;
+}
+
+export interface ElementsScrollIntoViewCmd {
+  nodeId: number;
+}
+
+export interface ElementsSetForcedStatesCmd {
+  nodeId: number;
+  /**
+   * Full set of forced pseudo-classes for this node (e.g. [":hover", ":focus"]).
+   * The SDK applies these to the real element so the forced state renders in the
+   * mirror. An empty array clears all forced states for the node.
+   */
+  states: string[];
 }
 
 // ─────────────────────────────────────────────────────────
@@ -267,6 +297,10 @@ export interface MethodData {
   'elements.startPicker': ElementsStartPickerCmd;
   'elements.stopPicker': ElementsStopPickerCmd;
   'elements.setStyle': ElementsSetStyleCmd;
+  'elements.deleteNode': ElementsDeleteNodeCmd;
+  'elements.setHTML': ElementsSetHTMLCmd;
+  'elements.scrollIntoView': ElementsScrollIntoViewCmd;
+  'elements.setForcedStates': ElementsSetForcedStatesCmd;
   'elements.picked': ElementsPickedEvent;
 }
 
@@ -299,4 +333,8 @@ export type CommandMethod =
   | 'elements.highlight'
   | 'elements.startPicker'
   | 'elements.stopPicker'
-  | 'elements.setStyle';
+  | 'elements.setStyle'
+  | 'elements.deleteNode'
+  | 'elements.setHTML'
+  | 'elements.scrollIntoView'
+  | 'elements.setForcedStates';

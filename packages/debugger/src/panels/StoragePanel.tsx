@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useStore } from '../store';
 import { sendCommand } from '../ws';
 import type { StorageType } from '@remotr/shared';
+import { useT } from '../i18n';
 
 type StorageTab = 'local' | 'session' | 'cookie';
 
@@ -12,6 +13,7 @@ function StorageTable({
   data: Record<string, string>;
   storageType: StorageType;
 }): React.ReactElement {
+  const t = useT();
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 
@@ -47,14 +49,14 @@ function StorageTable({
     <table>
       <thead>
         <tr>
-          <th style={{ width: '35%' }}>Key</th>
-          <th>Value</th>
-          <th style={{ width: 60 }}>Actions</th>
+          <th style={{ width: '35%' }}>{t('storage.key')}</th>
+          <th>{t('storage.value')}</th>
+          <th style={{ width: 60 }}>{t('storage.actions')}</th>
         </tr>
       </thead>
       <tbody>
         {entries.length === 0 && (
-          <tr><td colSpan={3} style={{ color: 'var(--text-muted)', textAlign: 'center', padding: 12 }}>Empty</td></tr>
+          <tr><td colSpan={3} style={{ color: 'var(--text-muted)', textAlign: 'center', padding: 12 }}>{t('storage.empty')}</td></tr>
         )}
         {entries.map(([key, val]) => (
           <tr key={key}>
@@ -98,6 +100,7 @@ function StorageTable({
 export default function StoragePanel(): React.ReactElement {
   const storage = useStore((s) => s.storage);
   const [activeTab, setActiveTab] = useState<StorageTab>('local');
+  const t = useT();
 
   const handleRefresh = useCallback(async () => {
     const type = activeTab === 'cookie' ? 'cookie' : activeTab === 'session' ? 'session' : 'local';
@@ -115,9 +118,9 @@ export default function StoragePanel(): React.ReactElement {
 
   const tabs: StorageTab[] = ['local', 'session', 'cookie'];
   const tabLabels: Record<StorageTab, string> = {
-    local: 'Local Storage',
-    session: 'Session Storage',
-    cookie: 'Cookies',
+    local: t('storage.local'),
+    session: t('storage.session'),
+    cookie: t('storage.cookies'),
   };
 
   const currentData = storage[activeTab];
@@ -143,8 +146,8 @@ export default function StoragePanel(): React.ReactElement {
           </button>
         ))}
         <div style={{ flex: 1 }} />
-        <button onClick={handleRefresh}>Refresh</button>
-        <button onClick={handleClear} style={{ color: 'var(--accent-red)' }}>Clear All</button>
+        <button onClick={handleRefresh}>{t('common.refresh')}</button>
+        <button onClick={handleClear} style={{ color: 'var(--accent-red)' }}>{t('common.clearAll')}</button>
       </div>
 
       {/* Table */}

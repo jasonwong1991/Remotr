@@ -1,6 +1,7 @@
 import React from 'react';
 import { useStore } from '../../store';
 import { sendCommand } from '../../ws';
+import { useT } from '../../i18n';
 
 export default function PickerButton(): React.ReactElement {
   const pickerActive = useStore((s) => s.pickerActive);
@@ -9,6 +10,7 @@ export default function PickerButton(): React.ReactElement {
   const setPickerActive = useStore((s) => s.setPickerActive);
   const setPickerPending = useStore((s) => s.setPickerPending);
   const setPickerError = useStore((s) => s.setPickerError);
+  const t = useT();
   const handleClick = async () => {
     if (pickerPending) return;
 
@@ -45,10 +47,10 @@ export default function PickerButton(): React.ReactElement {
       disabled={pickerPending}
         title={
           pickerPending
-            ? 'Processing...'
+            ? t('picker.processing')
             : pickerActive
-            ? 'Stop picking element (Esc)'
-            : 'Pick an element from the page'
+            ? t('picker.stop')
+            : t('picker.pickTitle')
         }
         style={{
           display: 'flex',
@@ -66,7 +68,7 @@ export default function PickerButton(): React.ReactElement {
         }}
       >
         <span style={{ fontSize: 14, marginRight: 4 }}>{pickerPending ? '⟳' : '⊕'}</span>
-        {pickerPending ? 'Picking...' : 'Pick'}
+        {pickerPending ? t('picker.picking') : t('picker.pick')}
       </button>
       {pickerError && (
         <span style={{ color: 'var(--accent-red)', fontSize: 11 }}>

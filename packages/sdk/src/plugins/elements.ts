@@ -13,6 +13,7 @@ import type {
   CSSRule,
   ElementsHighlightCmd,
   ElementsSetStyleCmd,
+  ElementsSetForcedStatesCmd,
 } from '@remotr/shared';
 
 /** Parse a CSS pixel value like "10px" → 10. Returns 0 for unparseable values. */
@@ -64,12 +65,162 @@ function compareSpecificity(
   return a[2] - b[2];
 }
 
+/** Escape a string for safe use inside a RegExp. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Determine whether `element` matches `selector` once the given force-enabled
+ * pseudo-classes are stripped from it — e.g. for forced [":hover"], the rule
+ * `.btn:hover` matches a `.btn` element. Returns the comma-joined pseudo-classes
+ * that were present (and made it match), or undefined if it doesn't apply.
+ *
+ * The negative lookahead `(?![\w-])` keeps `:focus` from also matching inside
+ * `:focus-visible`.
+ */
+function matchForcedState(
+  element: Element,
+  selector: string,
+  forced: string[],
+): string | undefined {
+  const present: string[] = [];
+  let stripped = selector;
+  for (const pseudo of forced) {
+    const escaped = escapeRegExp(pseudo);
+    if (!new RegExp(escaped + '(?![\\w-])').test(selector)) continue;
+    present.push(pseudo);
+    stripped = stripped.replace(new RegExp(escaped + '(?![\\w-])', 'g'), '');
+  }
+  if (present.length === 0) return undefined;
+
+  stripped = stripped.trim();
+  if (!stripped) return undefined;
+
+  try {
+    if (element.matches(stripped)) return present.join(', ');
+  } catch {
+    // stripped selector became invalid — ignore
+  }
+  return undefined;
+}
+
+// ─────────────────────────────────────────────────────────
+// Forced pseudo-state emulation
+//
+// We can't reach the rendering engine to force a real :hover, so we emulate
+// it in CSS: add a marker class to the element and inject a stylesheet that
+// re-creates every :hover/:focus/... rule with the pseudo-class swapped for
+// that marker class. A class has the same specificity as a pseudo-class, so
+// the cascade is preserved. rrweb captures the marker class and the injected
+// <style>, so the mirror renders the forced state too.
+// ─────────────────────────────────────────────────────────
+
+/** Forced pseudo-class → the marker class that stands in for it. */
+const FORCE_MARKER: Record<string, string> = {
+  ':hover': 'remotr-force-hover',
+  ':active': 'remotr-force-active',
+  ':focus': 'remotr-force-focus',
+  ':focus-visible': 'remotr-force-focus-visible',
+};
+
+/**
+ * Swap each forced pseudo-class in `selector` for its marker class — e.g.
+ * `.btn:hover` → `.btn.remotr-force-hover`. The `(?![\w-])` lookahead keeps
+ * `:focus` from matching inside `:focus-visible`. Returns the selector
+ * unchanged when it references none of the forced pseudo-classes.
+ */
+function rewriteForcedSelector(selector: string, forced: string[]): string {
+  let out = selector;
+  for (const pseudo of forced) {
+    const marker = FORCE_MARKER[pseudo];
+    if (!marker) continue;
+    out = out.replace(new RegExp(escapeRegExp(pseudo) + '(?![\\w-])', 'g'), '.' + marker);
+  }
+  return out;
+}
+
+/**
+ * Walk a CSSRuleList and, for every style rule that references a forced
+ * pseudo-class and (after rewriting) targets a currently-marked element, push
+ * the rewritten rule text into `out`. Recurses into @media / @supports,
+ * preserving the wrapping condition via `pre`/`post`. The querySelector check
+ * both scopes rules to the forced element(s) — markers are applied first — and
+ * keeps the injected sheet small.
+ */
+function collectForcedRules(
+  rules: CSSRuleList,
+  forced: string[],
+  out: string[],
+  pre: string,
+  post: string,
+): void {
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    if (rule instanceof CSSStyleRule) {
+      const selector = rule.selectorText;
+      const rewritten = rewriteForcedSelector(selector, forced);
+      if (rewritten === selector) continue; // no forced pseudo-class in this rule
+      let targetsForced = false;
+      try {
+        targetsForced = document.querySelector(rewritten) !== null;
+      } catch {
+        continue; // rewritten selector is invalid — skip
+      }
+      if (!targetsForced) continue;
+      const body = rule.style.cssText;
+      if (body) out.push(`${pre}${rewritten}{${body}}${post}`);
+    } else if (typeof CSSMediaRule !== 'undefined' && rule instanceof CSSMediaRule) {
+      collectForcedRules(rule.cssRules, forced, out, `${pre}@media ${rule.conditionText}{`, `}${post}`);
+    } else if (typeof CSSSupportsRule !== 'undefined' && rule instanceof CSSSupportsRule) {
+      collectForcedRules(rule.cssRules, forced, out, `${pre}@supports ${rule.conditionText}{`, `}${post}`);
+    }
+  }
+}
+
 /**
  * Elements 插件：管理 DOM 元素与 rrweb node ID 的映射关系。
  * 用于前端与后端 DOM 定位的关联。
  */
 export function installElements(transport: Transport): void {
   const registry = new ElementRegistry();
+
+  // 强制伪类状态：nodeId → 该元素当前强制的伪类集合，以及承载改写规则的注入样式表。
+  const forcedByNode = new Map<number, Set<string>>();
+  let forcedStyleEl: HTMLStyleElement | null = null;
+
+  /** Rebuild the injected stylesheet from every node's current forced states. */
+  function rebuildForcedStylesheet(): void {
+    const union = new Set<string>();
+    for (const set of forcedByNode.values()) {
+      for (const pseudo of set) union.add(pseudo);
+    }
+
+    if (union.size === 0) {
+      if (forcedStyleEl) forcedStyleEl.textContent = '';
+      return;
+    }
+
+    if (!forcedStyleEl) {
+      forcedStyleEl = document.createElement('style');
+      forcedStyleEl.id = '__remotr_forced_pseudo';
+      (document.head ?? document.documentElement).appendChild(forcedStyleEl);
+    }
+
+    const forced = Array.from(union);
+    const out: string[] = [];
+    for (const sheet of Array.from(document.styleSheets)) {
+      if (sheet.ownerNode === forcedStyleEl) continue; // never rewrite our own sheet
+      let rules: CSSRuleList;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue; // CORS-restricted cross-origin sheet
+      }
+      if (rules) collectForcedRules(rules, forced, out, '', '');
+    }
+    forcedStyleEl.textContent = out.join('\n');
+  }
 
   // 创建 overlay 和 picker 实例
   const overlay = new ElementOverlay();
@@ -161,6 +312,85 @@ export function installElements(transport: Transport): void {
     }
 
     element.style.setProperty(cmd.property, cmd.value);
+    return { ok: true };
+  });
+
+  transport.onCommand('elements.deleteNode', (data) => {
+    const cmd = data as { nodeId: number };
+    const element = registry.resolve(cmd.nodeId);
+
+    if (!element) {
+      throw new Error(`Element not found for nodeId: ${cmd.nodeId}`);
+    }
+
+    if (!document.contains(element)) {
+      throw new Error('Element is detached from DOM');
+    }
+
+    element.remove();
+    return { ok: true };
+  });
+
+  // 处理编辑 outerHTML 命令
+  transport.onCommand('elements.setHTML', (data) => {
+    const cmd = data as { nodeId: number; outerHTML: string };
+    const element = registry.resolve(cmd.nodeId);
+
+    if (!element) {
+      throw new Error(`Element not found for nodeId: ${cmd.nodeId}`);
+    }
+
+    if (!document.contains(element)) {
+      throw new Error('Element is detached from DOM');
+    }
+
+    element.outerHTML = cmd.outerHTML;
+    return { ok: true };
+  });
+
+  // 处理滚动到视图命令
+  transport.onCommand('elements.scrollIntoView', (data) => {
+    const cmd = data as { nodeId: number };
+    const element = registry.resolve(cmd.nodeId);
+
+    if (!element) {
+      throw new Error(`Element not found for nodeId: ${cmd.nodeId}`);
+    }
+
+    if (!document.contains(element)) {
+      throw new Error('Element is detached from DOM');
+    }
+
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return { ok: true };
+  });
+
+  // 处理强制伪类状态命令：在真实 DOM 上模拟 :hover/:focus/... 以便镜像呈现
+  transport.onCommand('elements.setForcedStates', (data) => {
+    const cmd = data as ElementsSetForcedStatesCmd;
+    const element = registry.resolve(cmd.nodeId);
+
+    if (!element) {
+      throw new Error(`Element not found for nodeId: ${cmd.nodeId}`);
+    }
+
+    const states = (cmd.states ?? []).filter((s) => s in FORCE_MARKER);
+
+    // 先清掉该元素已有的标记类，再按当前请求重新打上（标记类必须在重建样式表前就位）
+    for (const marker of Object.values(FORCE_MARKER)) {
+      element.classList.remove(marker);
+    }
+    for (const state of states) {
+      element.classList.add(FORCE_MARKER[state]);
+    }
+
+    if (states.length > 0) {
+      forcedByNode.set(cmd.nodeId, new Set(states));
+    } else {
+      forcedByNode.delete(cmd.nodeId);
+    }
+
+    rebuildForcedStylesheet();
     return { ok: true };
   });
 
@@ -298,6 +528,8 @@ export function installElements(transport: Transport): void {
       throw new Error('Element is detached from DOM');
     }
 
+    const forced = (cmd.forcedStates ?? []).filter(Boolean);
+
     // 提取内联样式
     const inlineStyles: Record<string, string> = {};
     const style = (element as HTMLElement).style;
@@ -315,6 +547,8 @@ export function installElements(transport: Transport): void {
 
     for (let sheetIndex = 0; sheetIndex < sheets.length; sheetIndex++) {
       const sheet = sheets[sheetIndex];
+      // Skip our own forced-state sheet — its rewritten rules aren't real matches.
+      if (forcedStyleEl && sheet.ownerNode === forcedStyleEl) continue;
       let rules: CSSRuleList;
 
       try {
@@ -345,7 +579,14 @@ export function installElements(transport: Transport): void {
           continue;
         }
 
-        if (!matches) continue;
+        // 当伪类被强制开启时，额外纳入"去掉强制伪类后即可匹配"的规则
+        // （如强制 :hover 时纳入 .btn:hover），并标记其对应状态。
+        let forState: string | undefined;
+        if (!matches) {
+          if (forced.length === 0) continue;
+          forState = matchForcedState(element, selector, forced);
+          if (!forState) continue;
+        }
 
         // 提取规则中的样式属性
         const properties: Record<string, string> = {};
@@ -364,6 +605,7 @@ export function installElements(transport: Transport): void {
           source,
           properties,
           specificity: calculateSpecificity(selector),
+          forState,
         });
       }
     }

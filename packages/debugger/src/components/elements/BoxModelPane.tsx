@@ -1,5 +1,6 @@
 import React from 'react';
 import type { BoxModel } from '@remotr/shared';
+import { useT } from '../../i18n';
 
 interface BoxModelPaneProps {
   boxModel: BoxModel | null;
@@ -40,6 +41,7 @@ function EdgeLabel({ label, edges }: { label: string; edges: [number, number, nu
 }
 
 export default function BoxModelPane({ boxModel }: BoxModelPaneProps): React.ReactElement {
+  const t = useT();
   if (boxModel === null) {
     return (
       <div
@@ -52,7 +54,7 @@ export default function BoxModelPane({ boxModel }: BoxModelPaneProps): React.Rea
           fontSize: 12,
         }}
       >
-        Loading box model...
+        {t('boxModel.loading')}
       </div>
     );
   }

@@ -1,6 +1,7 @@
 import React from 'react';
 import type { CSSRule } from '@remotr/shared';
 import type { LoadStatus } from './StylesPane';
+import { useT } from '../../i18n';
 
 interface RulesPaneProps {
   inlineStyles: Record<string, string> | null;
@@ -24,24 +25,26 @@ function specificityScore([a, b, c]: [number, number, number]): number {
 }
 
 function PaneState({ message, error, onRetry }: { message: string; error?: boolean; onRetry?: () => void }): React.ReactElement {
+  const t = useT();
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, height: '100%', color: error ? 'var(--accent-red)' : 'var(--text-secondary)', fontSize: 12 }}>
       <span>{message}</span>
-      {onRetry && <button onClick={onRetry}>Retry</button>}
+      {onRetry && <button onClick={onRetry}>{t('common.retry')}</button>}
     </div>
   );
 }
 
 export default function RulesPane({ inlineStyles, rules, status = rules === null ? 'loading' : 'success', error, onRetry }: RulesPaneProps): React.ReactElement {
-  if (status === 'idle') return <PaneState message="Select an element to inspect matched rules." />;
-  if (status === 'loading') return <PaneState message="Loading rules..." />;
-  if (status === 'error') return <PaneState message={error || 'Failed to load matched rules.'} error onRetry={onRetry} />;
+  const t = useT();
+  if (status === 'idle') return <PaneState message={t('rules.selectElement')} />;
+  if (status === 'loading') return <PaneState message={t('rules.loading')} />;
+  if (status === 'error') return <PaneState message={error || t('rules.failed')} error onRetry={onRetry} />;
 
   const sortedRules = [...(rules ?? [])].sort((a, b) => specificityScore(b.specificity) - specificityScore(a.specificity));
   const hasInline = inlineStyles && Object.keys(inlineStyles).length > 0;
   const hasRules = sortedRules.length > 0;
 
-  if (!hasInline && !hasRules) return <PaneState message="No matched rules" />;
+  if (!hasInline && !hasRules) return <PaneState message={t('rules.noMatched')} />;
 
   const ruleBlockStyle: React.CSSProperties = { borderBottom: '1px solid var(--border)', padding: '6px 8px', fontFamily: 'var(--font-mono)', fontSize: 11 };
   const selectorLineStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 2 };
@@ -55,7 +58,7 @@ export default function RulesPane({ inlineStyles, rules, status = rules === null
     <div style={{ flex: 1, overflowY: 'auto' }}>
       {hasInline && (
         <div style={ruleBlockStyle}>
-          <div style={selectorLineStyle}><span style={selectorStyle}>element.style</span><span style={sourceStyle}>inline</span></div>
+          <div style={selectorLineStyle}><span style={selectorStyle}>element.style</span><span style={sourceStyle}>{t('styles.inline')}</span></div>
           <span style={braceStyle}>{'{'}</span>
           {Object.entries(inlineStyles!).map(([prop, value]) => (
             <div key={prop} style={propLineStyle}><span style={propNameStyle}>{prop}</span><span style={braceStyle}>: </span><span>{value}</span><span style={braceStyle}>;</span></div>

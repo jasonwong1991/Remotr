@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useT } from '../../i18n';
 
 export type LoadStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -8,7 +9,7 @@ interface StylesPaneProps {
   status?: LoadStatus;
   error?: string | null;
   onRetry?: () => void;
-  onStyleSaved?: () => void;
+  onStyleSaved?: (property: string, value: string) => void;
   onStyleError?: (error: string) => void;
 }
 
@@ -21,13 +22,14 @@ export default function StylesPane({
   onStyleSaved,
   onStyleError,
 }: StylesPaneProps): React.ReactElement {
+  const t = useT();
   const [filter, setFilter] = useState('');
   const [editedProps, setEditedProps] = useState<Set<string>>(new Set());
   const [savingProp, setSavingProp] = useState<string | null>(null);
 
-  if (status === 'idle') return <PaneState message="Select an element to inspect computed styles." />;
-  if (status === 'loading') return <PaneState message="Loading styles..." />;
-  if (status === 'error') return <PaneState message={error || 'Failed to load styles.'} error onRetry={onRetry} />;
+  if (status === 'idle') return <PaneState message={t('computed.selectElement')} />;
+  if (status === 'loading') return <PaneState message={t('styles.loading')} />;
+  if (status === 'error') return <PaneState message={error || t('styles.failed')} error onRetry={onRetry} />;
 
   const entries = Object.entries(styles ?? {});
   const filtered = entries.filter(([prop, value]) => {
@@ -36,7 +38,7 @@ export default function StylesPane({
     return prop.toLowerCase().includes(searchText) || value.toLowerCase().includes(searchText);
   });
 
-  if (entries.length === 0) return <PaneState message="No styles found" />;
+  if (entries.length === 0) return <PaneState message={t('computed.noStyles')} />;
 
   const handleValueEdit = async (prop: string, newValue: string) => {
     if (nodeId === null) return;
@@ -48,7 +50,7 @@ export default function StylesPane({
         onStyleError?.(reply.error);
       } else {
         setEditedProps((prev) => new Set(prev).add(prop));
-        onStyleSaved?.();
+        onStyleSaved?.(prop, newValue);
       }
     } catch (err) {
       onStyleError?.(err instanceof Error ? err.message : 'Failed to set style');
@@ -60,16 +62,16 @@ export default function StylesPane({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <input type="text" placeholder="Filter by property or value…" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ flex: 1, maxWidth: 300 }} />
-        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Double-click value to apply as inline style</span>
-        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{filtered.length} / {entries.length} styles</span>
+        <input type="text" placeholder={t('computed.filter')} value={filter} onChange={(e) => setFilter(e.target.value)} style={{ flex: 1, maxWidth: 300 }} />
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('computed.doubleClickApply')}</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('computed.stylesCount', { filtered: filtered.length, total: entries.length })}</span>
       </div>
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {filtered.length === 0 ? (
-          <div style={{ padding: '12px 8px', color: 'var(--text-muted)', fontSize: 11, textAlign: 'center' }}>No styles match filter</div>
+          <div style={{ padding: '12px 8px', color: 'var(--text-muted)', fontSize: 11, textAlign: 'center' }}>{t('computed.noMatchFilter')}</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th>Property</th><th>Value</th></tr></thead>
+            <thead><tr><th>{t('computed.property')}</th><th>{t('computed.value')}</th></tr></thead>
             <tbody>
               {filtered.map(([prop, value], index) => {
                 const displayValue = value.length > 100 ? value.slice(0, 100) + '...' : value;
@@ -77,8 +79,8 @@ export default function StylesPane({
                 return (
                   <tr key={prop} style={{ background: index % 2 === 0 ? 'transparent' : 'var(--bg-secondary)' }}>
                     <td style={{ padding: '3px 8px', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)', verticalAlign: 'top', borderBottom: '1px solid var(--border)' }}>{prop}</td>
-                    <td title={value.length > 100 ? value : 'Double-click value to apply as inline style'} style={{ padding: '3px 8px', fontSize: 11, fontFamily: 'var(--font-mono)', color: isEdited ? 'var(--accent-orange)' : 'var(--text-primary)', fontWeight: isEdited ? 600 : 400, wordBreak: 'break-all', borderBottom: '1px solid var(--border)' }}>
-                      <EditableValue value={savingProp === prop ? 'Saving...' : displayValue} fullValue={value} onSave={(newValue) => handleValueEdit(prop, newValue)} />
+                    <td title={value.length > 100 ? value : t('computed.doubleClickApply')} style={{ padding: '3px 8px', fontSize: 11, fontFamily: 'var(--font-mono)', color: isEdited ? 'var(--accent-orange)' : 'var(--text-primary)', fontWeight: isEdited ? 600 : 400, wordBreak: 'break-all', borderBottom: '1px solid var(--border)' }}>
+                      <EditableValue value={savingProp === prop ? t('styles.saving') : displayValue} fullValue={value} onSave={(newValue) => handleValueEdit(prop, newValue)} />
                     </td>
                   </tr>
                 );
@@ -92,7 +94,8 @@ export default function StylesPane({
 }
 
 function PaneState({ message, error, onRetry }: { message: string; error?: boolean; onRetry?: () => void }): React.ReactElement {
-  return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, height: '100%', color: error ? 'var(--accent-red)' : 'var(--text-secondary)', fontSize: 12 }}><span>{message}</span>{onRetry && <button onClick={onRetry}>Retry</button>}</div>;
+  const t = useT();
+  return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, height: '100%', color: error ? 'var(--accent-red)' : 'var(--text-secondary)', fontSize: 12 }}><span>{message}</span>{onRetry && <button onClick={onRetry}>{t('common.retry')}</button>}</div>;
 }
 
 interface EditableValueProps { value: string; fullValue: string; onSave: (newValue: string) => void; }

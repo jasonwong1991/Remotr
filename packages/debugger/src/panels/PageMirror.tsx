@@ -2,12 +2,20 @@ import React, { useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { Replayer } from 'rrweb';
 import 'rrweb/dist/style.css';
+import { buildDomTreeFromReplayer } from '../components/elements/domTree';
+import { useT } from '../i18n';
 
 // rrweb event type 2 = FullSnapshot
 const FULL_SNAPSHOT_TYPE = 2;
+// rrweb event type 3 = IncrementalSnapshot; data.source 0 = Mutation (node
+// add/remove, attribute/style/text changes) — the only increments that alter
+// the DOM tree shape and therefore warrant a tree rebuild.
+const INCREMENTAL_SNAPSHOT_TYPE = 3;
+const MUTATION_SOURCE = 0;
 
 export default function PageMirror(): React.ReactElement {
   const rrwebEvents = useStore((s) => s.rrwebEvents);
+  const t = useT();
   const pickerActive = useStore((s) => s.pickerActive);
   const selectedNodeId = useStore((s) => s.selectedNodeId);
   const setSelectedNode = useStore((s) => s.setSelectedNode);
@@ -16,6 +24,7 @@ export default function PageMirror(): React.ReactElement {
   const replayerRef = useRef<InstanceType<typeof Replayer> | null>(null);
   const processedCountRef = useRef(0);
   const hasFullSnapshotRef = useRef(false);
+  const treeRafRef = useRef<number | null>(null);
   const [ready, setReady] = React.useState(false);
 
   // Overlays live in the scaled space (siblings of the iframe), so their
@@ -36,7 +45,25 @@ export default function PageMirror(): React.ReactElement {
     replayerRef.current = null;
     processedCountRef.current = 0;
     hasFullSnapshotRef.current = false;
+    if (treeRafRef.current != null) {
+      cancelAnimationFrame(treeRafRef.current);
+      treeRafRef.current = null;
+    }
+    useStore.getState().setDomTree(null);
     setReady(false);
+  }, []);
+
+  /**
+   * Publish the live Elements tree from the replayer's mirror. Coalesced into a
+   * single rebuild per animation frame so bursts of mutations (or a remote page
+   * animating) don't trigger a full DOM walk per event.
+   */
+  const scheduleTreePublish = React.useCallback(() => {
+    if (treeRafRef.current != null) return;
+    treeRafRef.current = requestAnimationFrame(() => {
+      treeRafRef.current = null;
+      useStore.getState().setDomTree(buildDomTreeFromReplayer(replayerRef.current));
+    });
   }, []);
 
   /**
@@ -143,8 +170,17 @@ export default function PageMirror(): React.ReactElement {
     const newEvents = events.slice(processedCountRef.current);
     if (newEvents.length === 0) return;
 
+    // Whether this batch changed the DOM tree shape and warrants a rebuild.
+    let structural = false;
+
     for (const event of newEvents) {
-      const ev = event as { type?: number };
+      const ev = event as { type?: number; data?: { source?: number } };
+
+      if (ev.type === FULL_SNAPSHOT_TYPE) {
+        structural = true;
+      } else if (ev.type === INCREMENTAL_SNAPSHOT_TYPE && ev.data?.source === MUTATION_SOURCE) {
+        structural = true;
+      }
 
       if (!hasFullSnapshotRef.current) {
         if (ev.type === FULL_SNAPSHOT_TYPE) {
@@ -170,9 +206,29 @@ export default function PageMirror(): React.ReactElement {
               showDebug: false,
               mouseTail: false,
               blockClass: '__rrweb_noop__',
+              // CRITICAL: must be false. rrweb's virtual-DOM optimization engages
+              // the moment a mutation is applied in `isSync` mode, and only flushes
+              // back to the real iframe when a later *non-sync* event arrives. The
+              // far-future baseline below forces EVERY event to be sync, so that
+              // flush never happens — mutations (e.g. hiding an element) would apply
+              // to an invisible virtual DOM and never paint. Disabling it makes each
+              // increment apply straight to the live iframe DOM, which also keeps the
+              // Elements tree (walked from that DOM) in sync.
+              useVirtualDom: false,
             });
-            const baseTs = (initEvents[0] as { timestamp?: number })?.timestamp;
-            replayerRef.current.startLive?.(baseTs);
+            // rrweb liveMode schedules each incoming event through an internal
+            // timer with `delay = event.timestamp - baselineTime`. If baseline
+            // is the first event's timestamp, every later incremental event is
+            // deferred by the full elapsed session time (seconds of lag).
+            //
+            // We never need wall-clock playback here — we want every increment
+            // applied the instant it arrives. addEvent() applies synchronously
+            // whenever `event.timestamp < baselineTime`, so we pin baseline to a
+            // far-future constant. All real timestamps fall below it, making the
+            // `isSync` path fire immediately (no timer scheduling, no lag).
+            // (Date.now() is unavailable in this sandbox, hence the constant.)
+            const FAR_FUTURE_BASELINE = 8.64e15; // max safe Date value (year 275760)
+            replayerRef.current.startLive?.(FAR_FUTURE_BASELINE);
             setReady(true);
           } catch (e) {
             console.warn('[PageMirror] Replayer init error:', e);
@@ -188,7 +244,10 @@ export default function PageMirror(): React.ReactElement {
     }
 
     processedCountRef.current = events.length;
-  }, [resetReplayer, rrwebEvents]);
+
+    // Rebuild the Elements tree once per batch when the DOM actually changed.
+    if (structural) scheduleTreePublish();
+  }, [resetReplayer, rrwebEvents, scheduleTreePublish]);
 
   useEffect(() => resetReplayer, [resetReplayer]);
 
@@ -218,7 +277,7 @@ export default function PageMirror(): React.ReactElement {
           }}
         >
           <span style={{ fontSize: 32 }}>⬜</span>
-          <span>Waiting for page snapshot…</span>
+          <span>{t('mirror.waiting')}</span>
           {vp && <span style={{ fontSize: 12 }}>{vp.width}×{vp.height}</span>}
         </div>
       )}

@@ -8,6 +8,8 @@ import type { SessionSnapshot, DashboardSessionsEvent } from '@remotr/shared';
 import { decodeFrame } from '@remotr/shared';
 import { navigateToSession } from '../router';
 import ThemeToggle from '../components/ThemeToggle';
+import LanguageToggle from '../components/LanguageToggle';
+import { useT, type MessageKey, type TFunc } from '../i18n';
 
 type GroupBy = 'identity' | 'device';
 
@@ -94,6 +96,7 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
 
   const totalSessions = sessions.length;
   const onlineSessions = sessions.filter((s) => s.connected).length;
+  const t = useT();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
@@ -110,16 +113,16 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
         }}
       >
         <h1 style={{ fontSize: 16, margin: 0, color: 'var(--text-primary)' }}>
-          🔍 Remotr Dashboard
+          {t('dashboard.title')}
         </h1>
         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>·</span>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          Room: <code style={{ background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 3 }}>{room}</code>
+          {t('dashboard.room')} <code style={{ background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 3 }}>{room}</code>
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>·</span>
         <span style={{ fontSize: 12 }}>
-          <span style={{ color: 'var(--accent-green)' }}>● {onlineSessions} online</span>
-          <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>/ {totalSessions} total</span>
+          <span style={{ color: 'var(--accent-green)' }}>{t('dashboard.online', { count: onlineSessions })}</span>
+          <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{t('dashboard.total', { count: totalSessions })}</span>
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>·</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
@@ -131,12 +134,13 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
               background: connStatus === 'connected' ? '#4caf50' : connStatus === 'connecting' ? '#ffcc02' : '#f44747',
             }}
           />
-          {connStatus}
+          {t(`status.${connStatus}` as MessageKey)}
         </span>
 
         <div style={{ flex: 1 }} />
 
         <ThemeToggle />
+        <LanguageToggle />
 
         <div style={{ display: 'flex', gap: 4 }}>
           <button
@@ -151,7 +155,7 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
               fontSize: 11,
             }}
           >
-            按身份分组
+            {t('dashboard.groupByIdentity')}
           </button>
           <button
             onClick={() => setGroupBy('device')}
@@ -165,7 +169,7 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
               fontSize: 11,
             }}
           >
-            按设备分组
+            {t('dashboard.groupByDevice')}
           </button>
         </div>
       </div>
@@ -183,16 +187,17 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
 }
 
 function EmptyState({ room, connStatus }: { room: string; connStatus: string }): React.ReactElement {
+  const t = useT();
   const scriptTag = `<script src="${window.location.origin}/remotr.js" data-room="${room}"></script>`;
 
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', maxWidth: 700, margin: '0 auto' }}>
       <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.5 }}>📡</div>
       <h2 style={{ fontSize: 18, color: 'var(--text-primary)', marginBottom: 12 }}>
-        {connStatus === 'connected' ? '暂无活跃 Session' : '正在连接...'}
+        {connStatus === 'connected' ? t('dashboard.noSessions') : t('dashboard.connecting')}
       </h2>
       <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 13 }}>
-        在你的页面中注入下方代码，即可在此查看：
+        {t('dashboard.injectHint')}
       </p>
       <pre
         style={{
@@ -210,7 +215,7 @@ function EmptyState({ room, connStatus }: { room: string; connStatus: string }):
         {scriptTag}
       </pre>
       <p style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 12 }}>
-        支持 <code>data-identity-cookie="username"</code> 按用户分组
+        {t('dashboard.supportsPrefix')} <code>data-identity-cookie="username"</code> {t('dashboard.supportsSuffix')}
       </p>
     </div>
   );
@@ -225,6 +230,7 @@ function SessionGroups({
   groupBy: GroupBy;
   room: string;
 }): React.ReactElement {
+  const t = useT();
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto' }}>
       {Array.from(groups.entries()).map(([topKey, subMap]) => (
@@ -253,7 +259,7 @@ function SessionGroups({
             </span>
             <strong style={{ color: 'var(--text-primary)' }}>{topKey}</strong>
             <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-              · {Array.from(subMap.values()).reduce((sum, arr) => sum + arr.length, 0)} pages
+              · {t('dashboard.pages', { count: Array.from(subMap.values()).reduce((sum, arr) => sum + arr.length, 0) })}
             </span>
           </div>
 
@@ -292,6 +298,7 @@ function SessionGroups({
 }
 
 function SessionCard({ session, room }: { session: SessionSnapshot; room: string }): React.ReactElement {
+  const t = useT();
   const handleClick = () => {
     navigateToSession(room, session.session.deviceId, session.session.pageId);
   };
@@ -299,7 +306,7 @@ function SessionCard({ session, room }: { session: SessionSnapshot; room: string
   const ua = session.systemInfo?.ua || '';
   const browser = parseBrowser(ua);
   const url = session.systemInfo?.url || '';
-  const title = session.systemInfo?.title || '(no title)';
+  const title = session.systemInfo?.title || t('dashboard.noTitle');
   const viewport = session.systemInfo?.viewport;
   const framework = session.systemInfo?.framework;
 
@@ -336,10 +343,10 @@ function SessionCard({ session, room }: { session: SessionSnapshot; room: string
           }}
         />
         <span style={{ fontSize: 11, color: session.connected ? 'var(--accent-green)' : 'var(--text-muted)' }}>
-          {session.connected ? '在线' : '离线'}
+          {session.connected ? t('status.online') : t('status.offline')}
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: 'auto' }}>
-          {formatTime(session.lastActive)}
+          {formatTime(session.lastActive, t)}
         </span>
       </div>
 
@@ -414,12 +421,12 @@ function parseBrowser(ua: string): string {
   return 'Browser';
 }
 
-function formatTime(ts: number): string {
+function formatTime(ts: number, t: TFunc): string {
   const now = Date.now();
   const diff = Math.floor((now - ts) / 1000);
-  if (diff < 5) return '刚刚';
-  if (diff < 60) return `${diff}秒前`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`;
+  if (diff < 5) return t('time.justNow');
+  if (diff < 60) return t('time.secondsAgo', { n: diff });
+  if (diff < 3600) return t('time.minutesAgo', { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t('time.hoursAgo', { n: Math.floor(diff / 3600) });
   return new Date(ts).toLocaleString();
 }

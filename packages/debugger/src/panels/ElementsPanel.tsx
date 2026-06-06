@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../store';
 import ElementTree from '../components/elements/ElementTree';
 import StylesPane from '../components/elements/StylesPane';
@@ -9,26 +9,21 @@ import { sendCommand } from '../ws';
 import type { RrwebNode } from '../components/elements/ElementTree';
 import type { BoxModel, CSSRule } from '@remotr/shared';
 import type { LoadStatus } from '../components/elements/StylesPane';
+import { useT } from '../i18n';
 
 interface RrwebSnapshot {
   type: number;
   data: { node: RrwebNode; initialOffset?: { top: number; left: number } };
 }
 
-function parseFullSnapshot(events: unknown[]): RrwebNode | null {
-  for (const ev of events) {
-    const e = ev as { type?: number; data?: { node?: RrwebNode } };
-    if (e.type === 2 && e.data?.node) return e.data.node;
-  }
-  return null;
-}
-
 export default function ElementsPanel(): React.ReactElement {
-  const rrwebEvents = useStore((s) => s.rrwebEvents);
   const selectedNodeId = useStore((s) => s.selectedNodeId);
+  const t = useT();
   const selectedElementData = useStore((s) => s.selectedElementData);
   const setElementData = useStore((s) => s.setElementData);
-  const rootNode = useMemo(() => parseFullSnapshot(rrwebEvents), [rrwebEvents]);
+  // The tree is rebuilt from the rrweb mirror by PageMirror, so it reflects
+  // live DOM changes (hide / delete / edit) instead of the one-shot snapshot.
+  const rootNode = useStore((s) => s.domTree);
   const [inspectorTab, setInspectorTab] = useState<'computed' | 'boxModel' | 'styles'>('styles');
   const [boxModel, setBoxModel] = useState<BoxModel | null>(null);
   const [rulesResult, setRulesResult] = useState<{ inlineStyles: Record<string, string>; rules: CSSRule[] } | null>(null);
@@ -37,6 +32,28 @@ export default function ElementsPanel(): React.ReactElement {
   const [computedError, setComputedError] = useState<string | null>(null);
   const [rulesError, setRulesError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  // Per-node forced pseudo-states (e.g. :hover), lifted here because the
+  // matched-rules query needs them; ElementTree's context menu toggles them.
+  const [forcedStates, setForcedStates] = useState<Map<number, Set<string>>>(() => new Map());
+  const forcedRef = useRef(forcedStates);
+  forcedRef.current = forcedStates;
+  const toggleForcedState = useCallback((nodeId: number, pseudo: string) => {
+    // Derive the node's next forced set from the latest committed map.
+    const set = new Set(forcedRef.current.get(nodeId) ?? []);
+    if (set.has(pseudo)) set.delete(pseudo);
+    else set.add(pseudo);
+    setForcedStates((prev) => {
+      const next = new Map(prev);
+      if (set.size > 0) next.set(nodeId, set);
+      else next.delete(nodeId);
+      return next;
+    });
+    // Apply on the real element so the forced state renders in the mirror;
+    // the matched-rules re-query (below) refreshes the Styles-pane badges.
+    void sendCommand('elements.setForcedStates', { nodeId, states: Array.from(set) }).catch(() => {});
+  }, []);
+  const forcedSelected = selectedNodeId !== null ? forcedStates.get(selectedNodeId) : undefined;
+  const forcedKey = forcedSelected ? Array.from(forcedSelected).sort().join(',') : '';
   const [leftWidth, setLeftWidth] = useState(50);
   const dragging = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -119,7 +136,10 @@ export default function ElementsPanel(): React.ReactElement {
         setBoxModel(null);
       });
 
-    sendCommand('elements.getMatchedRules', { nodeId: selectedNodeId })
+    sendCommand('elements.getMatchedRules', {
+      nodeId: selectedNodeId,
+      forcedStates: Array.from(forcedRef.current.get(selectedNodeId) ?? []),
+    })
       .then((reply) => {
         if (reqId !== requestIdRef.current) return;
         if (reply.error) {
@@ -144,34 +164,72 @@ export default function ElementsPanel(): React.ReactElement {
     fetchData();
   }, [fetchData]);
 
-  const handleStyleSaved = useCallback(() => {
-    if (selectedNodeId === null) return;
-    const reqId = ++requestIdRef.current;
-    setComputedStatus('loading');
-    setRulesStatus('loading');
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    sendCommand('elements.getComputedStyles', { nodeId: selectedNodeId })
-      .then((reply) => {
-        if (reqId !== requestIdRef.current) return;
-        if (!reply.error) {
-        const result = reply.result as { styles: Record<string, string> };
-       setElementData({ computedStyles: result.styles });
-          setComputedStatus('success');
-        }
+  const debouncedRefresh = useCallback(() => {
+    if (debounceTimerRef.current !== null) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = null;
+      if (selectedNodeId === null) return;
+      const reqId = ++requestIdRef.current;
+
+      sendCommand('elements.getComputedStyles', { nodeId: selectedNodeId })
+        .then((reply) => {
+          if (reqId !== requestIdRef.current) return;
+          if (!reply.error) {
+            const result = reply.result as { styles: Record<string, string> };
+            setElementData({ computedStyles: result.styles });
+            setComputedStatus('success');
+          }
+        })
+        .catch(() => {});
+
+      sendCommand('elements.getMatchedRules', {
+        nodeId: selectedNodeId,
+        forcedStates: Array.from(forcedRef.current.get(selectedNodeId) ?? []),
       })
-      .catch(() => {});
-
-    sendCommand('elements.getMatchedRules', { nodeId: selectedNodeId })
-      .then((reply) => {
-        if (reqId !== requestIdRef.current) return;
-      if (!reply.error) {
-          const result = reply.result as { inlineStyles: Record<string, string>; rules: CSSRule[] };
-          setRulesResult({ inlineStyles: result.inlineStyles, rules: result.rules });
-          setRulesStatus('success');
-        }
-   })
-      .catch(() => {});
+        .then((reply) => {
+          if (reqId !== requestIdRef.current) return;
+          if (!reply.error) {
+            const result = reply.result as { inlineStyles: Record<string, string>; rules: CSSRule[] };
+            setRulesResult({ inlineStyles: result.inlineStyles, rules: result.rules });
+            setRulesStatus('success');
+          }
+        })
+        .catch(() => {});
+    }, 500);
   }, [selectedNodeId, setElementData]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current !== null) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  // When forced pseudo-states change for the selected node, silently re-query
+  // matched rules so the corresponding :hover/:focus/... rules show in Styles.
+  useEffect(() => {
+    if (selectedNodeId === null) return;
+    debouncedRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forcedKey]);
+
+  const handleStyleSaved = useCallback((property: string, value: string) => {
+    // Optimistic local update — immediately reflect the change in the UI
+    setRulesResult((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        inlineStyles: { ...prev.inlineStyles, [property]: value },
+      };
+    });
+    // Debounced remote refresh to batch rapid consecutive edits
+    debouncedRefresh();
+  }, [debouncedRefresh]);
 
   return (
     <div style={{ display: 'flex', height: '100%', flexDirection: 'column' }}>
@@ -179,13 +237,13 @@ export default function ElementsPanel(): React.ReactElement {
         <PickerButton />
       </div>
       <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <div style={{ width: `${leftWidth}%`, height: '100%', overflow: 'hidden' }}><ElementTree rootNode={rootNode} /></div>
+        <div style={{ width: `${leftWidth}%`, height: '100%', overflow: 'hidden' }}><ElementTree rootNode={rootNode} onStyleChanged={handleStyleSaved} forcedStates={forcedStates} onToggleForcedState={toggleForcedState} /></div>
         <div onMouseDown={onMouseDown} style={{ width: 4, cursor: 'col-resize', background: 'var(--border)', flexShrink: 0 }} />
         <div style={{ flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             {(['styles', 'computed', 'boxModel'] as const).map((tab) => (
         <button key={tab} onClick={() => setInspectorTab(tab)} style={{ border: 'none', borderBottom: inspectorTab === tab ? '2px solid var(--accent-blue)' : '2px solid transparent', borderRadius: 0, background: inspectorTab === tab ? 'var(--bg-primary)' : 'transparent', color: inspectorTab === tab ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '6px 14px', cursor: 'pointer', fontSize: 12 }}>
-            {tab === 'styles' ? 'Styles' : tab === 'computed' ? 'Computed' : 'Box Model'}
+            {tab === 'styles' ? t('tab.styles') : tab === 'computed' ? t('tab.computed') : t('tab.boxModel')}
            </button>
             ))}
           </div>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { CSSRule } from '@remotr/shared';
 import type { LoadStatus } from './StylesPane';
 import { sendCommand } from '../../ws';
+import { useT } from '../../i18n';
 
 interface EditableStylesPaneProps {
   inlineStyles: Record<string, string> | null;
@@ -10,7 +11,7 @@ interface EditableStylesPaneProps {
   status?: LoadStatus;
   error?: string | null;
   onRetry?: () => void;
-  onStyleSaved?: () => void;
+  onStyleSaved?: (property: string, value: string) => void;
 }
 
 function formatSource(source: string): string {
@@ -27,10 +28,11 @@ function specificityScore([a, b, c]: [number, number, number]): number {
 }
 
 function PaneState({ message, error, onRetry }: { message: string; error?: boolean; onRetry?: () => void }): React.ReactElement {
+  const t = useT();
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, height: '100%', color: error ? 'var(--accent-red)' : 'var(--text-secondary)', fontSize: 13 }}>
       <span>{message}</span>
-      {onRetry && <button onClick={onRetry}>Retry</button>}
+      {onRetry && <button onClick={onRetry}>{t('common.retry')}</button>}
     </div>
   );
 }
@@ -44,19 +46,20 @@ export default function EditableStylesPane({
   onRetry,
   onStyleSaved,
 }: EditableStylesPaneProps): React.ReactElement {
+  const t = useT();
   const [editedProps, setEditedProps] = useState<Set<string>>(new Set());
   const [savingProp, setSavingProp] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  if (status === 'idle') return <PaneState message="Select an element to inspect styles." />;
-  if (status === 'loading') return <PaneState message="Loading styles..." />;
-  if (status === 'error') return <PaneState message={error || 'Failed to load styles.'} error onRetry={onRetry} />;
+  if (status === 'idle') return <PaneState message={t('styles.selectElement')} />;
+  if (status === 'loading') return <PaneState message={t('styles.loading')} />;
+  if (status === 'error') return <PaneState message={error || t('styles.failed')} error onRetry={onRetry} />;
 
   const sortedRules = [...(rules ?? [])].sort((a, b) => specificityScore(b.specificity) - specificityScore(a.specificity));
   const hasInline = inlineStyles && Object.keys(inlineStyles).length > 0;
   const hasRules = sortedRules.length > 0;
 
-  if (!hasInline && !hasRules) return <PaneState message="No matched styles" />;
+  if (!hasInline && !hasRules) return <PaneState message={t('styles.noMatched')} />;
 
   const handleValueEdit = async (prop: string, newValue: string) => {
     if (nodeId === null) return;
@@ -68,7 +71,7 @@ export default function EditableStylesPane({
         setSaveError(reply.error);
       } else {
         setEditedProps((prev) => new Set(prev).add(prop));
-        onStyleSaved?.();
+        onStyleSaved?.(prop, newValue);
       }
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to set style');
@@ -98,6 +101,16 @@ export default function EditableStylesPane({
     fontSize: 11,
     marginLeft: 8,
     flexShrink: 0
+  };
+  const forcedBadgeStyle: React.CSSProperties = {
+    marginLeft: 6,
+    padding: '0 5px',
+    borderRadius: 3,
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--accent-orange)',
+    border: '1px solid var(--accent-orange)',
+    whiteSpace: 'nowrap'
   };
   const propLineStyle: React.CSSProperties = {
     paddingLeft: 20,
@@ -132,7 +145,7 @@ export default function EditableStylesPane({
       <div style={ruleBlockStyle}>
             <div style={selectorLineStyle}>
          <span style={selectorStyle}>element.style</span>
-              <span style={sourceStyle}>inline</span>
+              <span style={sourceStyle}>{t('styles.inline')}</span>
       </div>
             <span style={braceStyle}>{'{'}</span>
          {Object.entries(inlineStyles!).map(([prop, value]) => {
@@ -143,7 +156,7 @@ export default function EditableStylesPane({
                <span style={propNameStyle}>{prop}</span>
         <span style={braceStyle}>: </span>
                   <EditableValue
-                  value={isSaving ? 'Saving...' : value}
+                  value={isSaving ? t('styles.saving') : value}
               isEdited={isEdited}
                     onSave={(newValue) => handleValueEdit(prop, newValue)}
             />
@@ -155,9 +168,15 @@ export default function EditableStylesPane({
     </div>
     )}
         {sortedRules.map((rule, index) => (
-          <div key={`${rule.selector}-${rule.styleSheetIndex}-${index}`} style={ruleBlockStyle}>
+          <div
+            key={`${rule.selector}-${rule.styleSheetIndex}-${index}`}
+            style={rule.forState ? { ...ruleBlockStyle, borderLeft: '2px solid var(--accent-orange)' } : ruleBlockStyle}
+          >
             <div style={selectorLineStyle}>
-              <span style={selectorStyle}>{rule.selector}</span>
+              <span style={selectorStyle}>
+                {rule.selector}
+                {rule.forState && <span style={forcedBadgeStyle}>{t('styles.force')} {rule.forState}</span>}
+              </span>
             <span style={sourceStyle}>{formatSource(rule.source)}</span>
             </div>
         <span style={braceStyle}>{'{'}</span>
@@ -169,7 +188,7 @@ export default function EditableStylesPane({
                   <span style={propNameStyle}>{prop}</span>
                 <span style={braceStyle}>: </span>
               <EditableValue
-                    value={isSaving ? 'Saving...' : value}
+                    value={isSaving ? t('styles.saving') : value}
                isEdited={isEdited}
                onSave={(newValue) => handleValueEdit(prop, newValue)}
              />
@@ -192,6 +211,7 @@ interface EditableValueProps {
 }
 
 function EditableValue({ value, isEdited, onSave }: EditableValueProps): React.ReactElement {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(value);
 
@@ -244,7 +264,7 @@ function EditableValue({ value, isEdited, onSave }: EditableValueProps): React.R
         cursor: 'text',
         flex: 1,
       }}
-      title="Click to edit (applies as inline style)"
+      title={t('styles.clickToEdit')}
     >
       {value}
     </span>
