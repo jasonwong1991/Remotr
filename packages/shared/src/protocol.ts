@@ -79,9 +79,14 @@ export interface NetworkRequestEvent {
   method: string;
   headers: Record<string, string>;
   body?: string;
-  /** 发起方：fetch / xhr / beacon / websocket / resource (CSS/JS/img/font/media etc.) */
-  initiator: 'fetch' | 'xhr' | 'beacon' | 'websocket' | 'link' | 'script' | 'img' | 'css' | 'xmlhttprequest' | 'fetch' | 'other';
-  /** Resource timing details (for resource initiator types) */
+  /**
+   * 发起方分类：
+   * - 'fetch' / 'xhr' / 'beacon' / 'websocket'：JS API 主动发起
+   * - 'link' / 'script' / 'img' / 'css' / 'video' / 'audio' / 'iframe' / 'other'：
+   *   PerformanceResourceTiming.initiatorType 上报的标签加载
+   */
+  initiator: string;
+  /** Resource timing（来自 PerformanceResourceTiming） */
   timing?: {
     startTime: number;
     fetchStart: number;
@@ -108,17 +113,15 @@ export interface NetworkResponseEvent {
   mimeType?: string;
   /** 耗时（毫秒） */
   duration: number;
-  /** 是否来自缓存 */
+  /** 是否来自缓存（基于 transferSize=0 && responseStart>0 推断） */
   fromCache?: boolean;
-  /** 是否 CORS 阻止（transferSize=0 且 responseStart=0） */
-  corsBlocked?: boolean;
 }
 
 export interface NetworkErrorEvent {
   reqId: string;
   error: string;
   duration: number;
-  /** 错误类型：network / cors / timeout / abort */
+  /** 错误类型：网络层 / CORS / 超时 / 主动 abort / 未知 */
   errorType?: 'network' | 'cors' | 'timeout' | 'abort' | 'unknown';
 }
 

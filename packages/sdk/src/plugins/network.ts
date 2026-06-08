@@ -21,42 +21,59 @@ function headersToRecord(h: Headers | Record<string, string>): Record<string, st
 }
 
 /**
+ * 模块级去重计数器：fetch / XHR / sendBeacon hook 在发起请求时 +1，
+ * PerformanceObserver 看到同 URL 的 entry 时 -1 并跳过；计数归零或不存在
+ * 时才认为是标签发起（CSS/JS/img/font…）。
+ *
+ * 用计数器而非 Set，是因为同一 URL 可能被业务多次请求（轮询/重试）。
+ */
+const pendingJsUrls = new Map<string, number>();
+
+function markJsRequest(url: string): void {
+  pendingJsUrls.set(url, (pendingJsUrls.get(url) ?? 0) + 1);
+  // 兜底清理：10s 后强制 -1，避免 Observer 漏报导致计数永留
+  setTimeout(() => {
+    const n = pendingJsUrls.get(url) ?? 0;
+    if (n <= 1) pendingJsUrls.delete(url);
+    else pendingJsUrls.set(url, n - 1);
+  }, 10_000);
+}
+
+function consumeJsRequest(url: string): boolean {
+  const n = pendingJsUrls.get(url) ?? 0;
+  if (n <= 0) return false;
+  if (n === 1) pendingJsUrls.delete(url);
+  else pendingJsUrls.set(url, n - 1);
+  return true;
+}
+
+/**
  * Network 插件：拦截 fetch / XMLHttpRequest / sendBeacon + 监控所有资源加载。
  * 关键约束：
  *  - fetch 必须 response.clone() 后再读 body，避免消费业务侧的 body
  *  - 采集失败不能影响请求本身
- *  - 使用 PerformanceObserver 捕获资源加载（CSS/JS/图片/字体等）
+ *  - 使用 PerformanceObserver 捕获标签加载（CSS/JS/图片/字体等）
+ *  - JS hook 与 PerformanceObserver 通过模块级计数器去重
  */
 export function installNetwork(transport: Transport): void {
+  // 先装 Resource Timing，再装 JS hook：保证 hook 启动时 markJsRequest 链路已就绪
+  hookResourceTiming(transport);
   hookFetch(transport);
   hookXHR(transport);
   hookBeacon(transport);
-  hookResourceTiming(transport);
 }
 
 /**
  * 使用 PerformanceObserver 监控所有资源加载（包括 link/script/img/video/font 等）
- * 可以检测 CORS 失败、缓存命中、详细时序
+ * 检测：缓存命中、详细时序。
+ *
+ * ⚠️ 不再做 CORS 启发式：跨域 no-cors 资源 / 缺失 Timing-Allow-Origin 都会
+ *    返回 transferSize=0，无法可靠区分。CORS 错误统一由 fetch hook 的 catch 上报。
  */
 function hookResourceTiming(transport: Transport): void {
   if (typeof PerformanceObserver === 'undefined' || typeof performance === 'undefined') {
     return;
   }
-
-  // Track URLs from JS interception to avoid duplicates
-  const jsRequestUrls = new Set<string>();
-  const urlTimestampMap = new Map<string, number>();
-
-  // Helper to mark JS-initiated requests
-  (window as any).__remotr_markJsRequest = (url: string) => {
-    jsRequestUrls.add(url);
-    urlTimestampMap.set(url, Date.now());
-    // Auto-cleanup after 10s
-    setTimeout(() => {
-      jsRequestUrls.delete(url);
-      urlTimestampMap.delete(url);
-    }, 10_000);
-  };
 
   try {
     const observer = new PerformanceObserver((list) => {
@@ -64,30 +81,25 @@ function hookResourceTiming(transport: Transport): void {
         if (entry.entryType !== 'resource') continue;
         const resource = entry as PerformanceResourceTiming;
 
-        // Skip if already captured by fetch/XHR hooks
-        const isDuplicate = jsRequestUrls.has(resource.name);
-        if (isDuplicate) {
-          jsRequestUrls.delete(resource.name);
-          continue;
-        }
+        // 跳过 fetch/XHR hook 已记录的请求
+        if (consumeJsRequest(resource.name)) continue;
 
         const reqId = nextId();
         const initiatorType = resource.initiatorType || 'other';
 
-        // Detect CORS blocking: transferSize=0 && responseStart=0 (not from cache)
-        const corsBlocked = resource.transferSize === 0 && resource.responseStart === 0 && resource.fetchStart > 0;
-
-        // Detect cache hit: transferSize=0 && responseStart>0
-        const fromCache = resource.transferSize === 0 && resource.responseStart > 0;
+        // 缓存命中启发式：transferSize=0 + 有响应时间 + 有解码体积
+        // 加 decodedBodySize > 0 这一条，能区分掉 no-cors 跨域（后者拿不到 size）
+        const fromCache = resource.transferSize === 0
+          && resource.responseStart > 0
+          && resource.decodedBodySize > 0;
 
         try {
-          // Send request event
           transport.send('network.request', {
             reqId,
             url: resource.name,
             method: 'GET',
             headers: {},
-            initiator: initiatorType as any,
+            initiator: initiatorType,
             timing: {
               startTime: resource.startTime,
               fetchStart: resource.fetchStart,
@@ -104,54 +116,64 @@ function hookResourceTiming(transport: Transport): void {
             },
           });
 
-          // Send response or error event
-          if (corsBlocked) {
-            transport.send('network.error', {
-              reqId,
-              error: 'CORS policy: No \'Access-Control-Allow-Origin\' header is present',
-              duration: resource.duration,
-              errorType: 'cors',
-            });
-          } else {
-            // Estimate status from timing (not available in Resource Timing API)
-            const status = resource.responseStart > 0 ? 200 : 0;
+          // Resource Timing API 拿不到 status；只要 responseStart>0 就视为成功
+          // （真正失败的资源浏览器不会上报 entry 或 responseStart=0）
+          const succeeded = resource.responseStart > 0 || resource.responseEnd > 0;
+          if (succeeded) {
             transport.send('network.response', {
               reqId,
-              status,
-              statusText: fromCache ? 'OK (cached)' : status === 200 ? 'OK' : '',
+              status: 200, // 推断值；详情面板会标注 "(estimated)"
+              statusText: fromCache ? '(from cache)' : '',
               headers: {},
               mimeType: inferMimeType(resource.name, initiatorType),
               duration: resource.duration,
               fromCache,
-              corsBlocked,
+            });
+          } else {
+            transport.send('network.error', {
+              reqId,
+              error: 'Resource failed to load',
+              duration: resource.duration,
+              errorType: 'network',
             });
           }
-        } catch (e) {
-          // Ignore send errors
+        } catch {
+          /* ignore */
         }
       }
     });
 
     observer.observe({ entryTypes: ['resource'] });
   } catch (e) {
-    console.warn('[remotr] PerformanceObserver not supported:', e);
+    // 浏览器不支持时静默降级
+    console.warn('[remotr] PerformanceObserver resource entries unavailable:', e);
   }
 }
 
 /**
- * Infer MIME type from URL and initiator type
+ * 根据 URL 后缀和 initiatorType 推断 MIME 类型（Resource Timing 拿不到 Content-Type）。
  */
 function inferMimeType(url: string, initiatorType: string): string | undefined {
-  const lower = url.toLowerCase();
+  const lower = url.split('?')[0].toLowerCase();
 
   if (initiatorType === 'css' || lower.endsWith('.css')) return 'text/css';
-  if (initiatorType === 'script' || lower.endsWith('.js') || lower.endsWith('.mjs')) return 'application/javascript';
-  if (initiatorType === 'img' || /\.(png|jpg|jpeg|gif|svg|webp|ico)/.test(lower)) return 'image/*';
-  if (/\.(woff2?|ttf|otf|eot)/.test(lower)) return 'font/*';
-  if (/\.(mp4|webm|ogg)/.test(lower)) return 'video/*';
-  if (/\.(mp3|wav|m4a)/.test(lower)) return 'audio/*';
+  if (initiatorType === 'script' || /\.(m?js|cjs)$/.test(lower)) return 'application/javascript';
+  if (initiatorType === 'img' || /\.(png|jpe?g|gif|svg|webp|avif|ico|bmp)$/.test(lower)) return 'image/*';
+  if (/\.(woff2?|ttf|otf|eot)$/.test(lower)) return 'font/*';
+  if (initiatorType === 'video' || /\.(mp4|webm|m4v)$/.test(lower)) return 'video/*';
+  if (initiatorType === 'audio' || /\.(mp3|wav|m4a|flac|aac)$/.test(lower)) return 'audio/*';
+  // .ogg 既可能是音频也可能是视频，保守不猜
 
   return undefined;
+}
+
+/** 根据错误信息分类 fetch/XHR 抛出的错误 */
+function classifyError(msg: string): 'network' | 'cors' | 'timeout' | 'abort' | 'unknown' {
+  if (/cors|cross-origin/i.test(msg)) return 'cors';
+  if (/timeout/i.test(msg)) return 'timeout';
+  if (/abort/i.test(msg)) return 'abort';
+  if (/network|failed to fetch/i.test(msg)) return 'network';
+  return 'unknown';
 }
 
 function hookFetch(transport: Transport): void {
@@ -178,10 +200,8 @@ function hookFetch(transport: Transport): void {
         ? headersToRecord(input.headers)
         : {};
 
-    // Mark this URL as JS-initiated to avoid duplicate in PerformanceObserver
-    if ((window as any).__remotr_markJsRequest) {
-      (window as any).__remotr_markJsRequest(url);
-    }
+    // 标记此 URL 已由 JS 发起，避免 PerformanceObserver 重复上报
+    markJsRequest(url);
 
     try {
       transport.send('network.request', {
@@ -225,18 +245,11 @@ function hookFetch(transport: Transport): void {
     } catch (err) {
       try {
         const errorMsg = String(err);
-        let errorType: 'network' | 'cors' | 'timeout' | 'abort' | 'unknown' = 'unknown';
-
-        if (/cors|cross-origin/i.test(errorMsg)) errorType = 'cors';
-        else if (/timeout/i.test(errorMsg)) errorType = 'timeout';
-        else if (/abort/i.test(errorMsg)) errorType = 'abort';
-        else if (/network|failed to fetch/i.test(errorMsg)) errorType = 'network';
-
         transport.send('network.error', {
           reqId,
           error: errorMsg,
           duration: Date.now() - start,
-          errorType,
+          errorType: classifyError(errorMsg),
         });
       } catch {
         /* ignore */
@@ -269,11 +282,10 @@ function hookXHR(transport: Transport): void {
     url: string | URL,
     ...rest: unknown[]
   ) {
-    const urlStr = typeof url === 'string' ? url : url.href;
     META.set(this, {
       reqId: nextId(),
       method: method.toUpperCase(),
-      url: urlStr,
+      url: typeof url === 'string' ? url : url.href,
       start: 0,
       reqHeaders: {},
     });
@@ -297,10 +309,7 @@ function hookXHR(transport: Transport): void {
       meta.start = Date.now();
       if (typeof body === 'string') meta.body = clampBody(body);
 
-      // Mark as JS-initiated
-      if ((window as any).__remotr_markJsRequest) {
-        (window as any).__remotr_markJsRequest(meta.url);
-      }
+      markJsRequest(meta.url);
 
       try {
         transport.send('network.request', {
@@ -309,28 +318,27 @@ function hookXHR(transport: Transport): void {
           method: meta.method,
           headers: meta.reqHeaders,
           body: meta.body,
-          initiator: 'xmlhttprequest',
+          initiator: 'xhr',
         });
       } catch {
         /* ignore */
       }
 
+      // 主动 abort 标记
+      let aborted = false;
+      this.addEventListener('abort', () => { aborted = true; });
+
       this.addEventListener('loadend', () => {
         try {
           const duration = Date.now() - meta.start;
           if (this.status === 0) {
-            const errorMsg = 'Network error / aborted';
-            let errorType: 'network' | 'cors' | 'abort' | 'unknown' = 'network';
-
-            // Try to determine if it's CORS or abort
-            if (this.readyState === 4) errorType = 'cors';
-            else if (this.readyState === 0) errorType = 'abort';
-
+            // status=0 + abort 事件：用户主动取消
+            // status=0 + 无 abort：网络错误或 CORS（无法可靠区分，统一标 network）
             transport.send('network.error', {
               reqId: meta.reqId,
-              error: errorMsg,
+              error: aborted ? 'Request aborted' : 'Network error',
               duration,
-              errorType,
+              errorType: aborted ? 'abort' : 'network',
             });
             return;
           }
@@ -386,9 +394,7 @@ function hookBeacon(transport: Transport): void {
     const reqId = nextId();
     const urlStr = typeof url === 'string' ? url : url.href;
 
-    if ((window as any).__remotr_markJsRequest) {
-      (window as any).__remotr_markJsRequest(urlStr);
-    }
+    markJsRequest(urlStr);
 
     try {
       transport.send('network.request', {

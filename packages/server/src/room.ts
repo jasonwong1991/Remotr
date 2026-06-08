@@ -95,8 +95,10 @@ export class Room {
     this.offlineSessionTTL = offlineSessionTTL;
     this.maxOfflineSessions = maxOfflineSessions;
 
-    // Start periodic cleanup (every 2 minutes)
+    // Start periodic cleanup (every 2 minutes). unref() so the timer doesn't
+    // keep the Node process alive on shutdown.
     this.cleanupTimer = setInterval(() => this.cleanupOfflineSessions(), 2 * 60 * 1000);
+    this.cleanupTimer.unref?.();
   }
 
   get size(): number {
