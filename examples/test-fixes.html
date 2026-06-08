@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Network + Session Fixes</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+    h1 { color: #333; }
+    button { margin: 5px; padding: 10px 20px; cursor: pointer; }
+    .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+    .info { background: #e3f2fd; padding: 10px; border-radius: 3px; margin: 10px 0; }
+    code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h1>🧪 Remotr Fixes Test Page</h1>
+
+  <div class="info">
+    <strong>测试说明：</strong>
+    <ul>
+      <li><strong>Session 清理测试：</strong>多次刷新或开新标签页，离线会话应在 10 分钟后自动清理</li>
+      <li><strong>Network 资源测试：</strong>点击按钮加载资源，Network 面板应显示所有资源（CSS/JS/图片/CORS错误等）</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>📡 Network 测试</h2>
+    <button onclick="testFetch()">测试 Fetch API</button>
+    <button onclick="testXHR()">测试 XMLHttpRequest</button>
+    <button onclick="testResourceLoading()">加载图片资源</button>
+    <button onclick="testCORS()">测试 CORS 错误</button>
+    <button onclick="testCachedResource()">测试缓存资源</button>
+    <div id="output"></div>
+  </div>
+
+  <div class="section">
+    <h2>🔗 动态加载资源测试</h2>
+    <button onclick="loadCSS()">加载外部 CSS</button>
+    <button onclick="loadScript()">加载外部 JS</button>
+    <button onclick="loadFont()">加载字体</button>
+    <div id="dynamic-content"></div>
+  </div>
+
+  <div class="section">
+    <h2>📊 Session 信息</h2>
+    <div id="session-info"></div>
+    <button onclick="showSessionInfo()">刷新 Session 信息</button>
+  </div>
+
+  <script>
+    // Display session info
+    function showSessionInfo() {
+      const deviceId = localStorage.getItem('__remotr_device_id');
+      const pageId = sessionStorage.getItem('__remotr_page_id');
+      document.getElementById('session-info').innerHTML = `
+        <code>deviceId: ${deviceId || 'not set'}</code><br>
+        <code>pageId: ${pageId || 'not set'}</code><br>
+        <small>刷新页面保持 pageId，新标签页生成新 pageId</small>
+      `;
+    }
+
+    // Test Fetch API
+    async function testFetch() {
+      try {
+        const res = await fetch('https://jsonplaceholder.typicode.com/posts/1');
+        const data = await res.json();
+        log('✅ Fetch success: ' + data.title);
+      } catch (e) {
+        log('❌ Fetch error: ' + e.message);
+      }
+    }
+
+    // Test XMLHttpRequest
+    function testXHR() {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', 'https://jsonplaceholder.typicode.com/users/1');
+      xhr.onload = () => log('✅ XHR success: status ' + xhr.status);
+      xhr.onerror = () => log('❌ XHR error');
+      xhr.send();
+    }
+
+    // Test resource loading (img tag)
+    function testResourceLoading() {
+      const img = new Image();
+      img.onload = () => log('✅ Image loaded via <img> tag');
+      img.onerror = () => log('❌ Image failed to load');
+      img.src = 'https://via.placeholder.com/150?' + Date.now();
+      document.getElementById('dynamic-content').appendChild(img);
+    }
+
+    // Test CORS error
+    function testCORS() {
+      fetch('https://example.com/api/test', { mode: 'cors' })
+        .then(() => log('✅ CORS request succeeded'))
+        .catch(e => log('❌ CORS blocked: ' + e.message));
+    }
+
+    // Test cached resource (load same image twice)
+    function testCachedResource() {
+      const img1 = new Image();
+      img1.src = 'https://via.placeholder.com/100/blue';
+      img1.onload = () => {
+        log('✅ First load complete');
+        // Load same image again (should be cached)
+        setTimeout(() => {
+          const img2 = new Image();
+          img2.src = 'https://via.placeholder.com/100/blue';
+          img2.onload = () => log('✅ Second load (from cache)');
+          document.getElementById('dynamic-content').appendChild(img2);
+        }, 500);
+      };
+      document.getElementById('dynamic-content').appendChild(img1);
+    }
+
+    // Load external CSS
+    function loadCSS() {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap';
+      link.onload = () => log('✅ CSS loaded');
+      link.onerror = () => log('❌ CSS load failed');
+      document.head.appendChild(link);
+    }
+
+    // Load external script
+    function loadScript() {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js';
+      script.onload = () => log('✅ Script loaded (lodash available: ' + (typeof _ !== 'undefined') + ')');
+      script.onerror = () => log('❌ Script load failed');
+      document.head.appendChild(script);
+    }
+
+    // Load font
+    function loadFont() {
+      const style = document.createElement('style');
+      style.textContent = `
+        @font-face {
+          font-family: 'TestFont';
+          src: url('https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxK.woff2') format('woff2');
+        }
+      `;
+      document.head.appendChild(style);
+      log('✅ Font face declared');
+    }
+
+    function log(msg) {
+      const div = document.getElementById('output');
+      const p = document.createElement('p');
+      p.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
+      p.style.margin = '5px 0';
+      p.style.padding = '5px';
+      p.style.background = msg.startsWith('✅') ? '#e8f5e9' : '#ffebee';
+      p.style.borderRadius = '3px';
+      div.insertBefore(p, div.firstChild);
+    }
+
+    // Auto-show session info on load
+    showSessionInfo();
+  </script>
+
+  <!-- Inject Remotr SDK -->
+  <script src="http://localhost:9777/remotr.js" data-room="test-fixes"></script>
+</body>
+</html>

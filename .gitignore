@@ -36,3 +36,6 @@ coverage/
 # Logs
 logs/
 *.log
+
+# Documentation
+docs/

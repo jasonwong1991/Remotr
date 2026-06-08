@@ -78,11 +78,25 @@ export class Room {
 
   private readonly maxBacklog: number;
   private readonly maxRrwebBacklog: number;
+  private readonly offlineSessionTTL: number; // milliseconds
+  private readonly maxOfflineSessions: number;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(id: string, maxBacklog = 500, maxRrwebBacklog = 1000) {
+  constructor(
+    id: string,
+    maxBacklog = 500,
+    maxRrwebBacklog = 1000,
+    offlineSessionTTL = 10 * 60 * 1000, // 10 minutes
+    maxOfflineSessions = 100
+  ) {
     this.id = id;
     this.maxBacklog = maxBacklog;
     this.maxRrwebBacklog = maxRrwebBacklog;
+    this.offlineSessionTTL = offlineSessionTTL;
+    this.maxOfflineSessions = maxOfflineSessions;
+
+    // Start periodic cleanup (every 2 minutes)
+    this.cleanupTimer = setInterval(() => this.cleanupOfflineSessions(), 2 * 60 * 1000);
   }
 
   get size(): number {
@@ -310,6 +324,43 @@ export class Room {
     };
   }
 
+  /** 清理过期的离线 sessions */
+  private cleanupOfflineSessions(): void {
+    const now = Date.now();
+    const toDelete: string[] = [];
+
+    // 1. Remove sessions offline longer than TTL
+    for (const [key, session] of this.offlineSessions) {
+      if (now - session.lastActive > this.offlineSessionTTL) {
+        toDelete.push(key);
+      }
+    }
+
+    // 2. If still exceeds max count, remove oldest
+    if (this.offlineSessions.size - toDelete.length > this.maxOfflineSessions) {
+      const sorted = Array.from(this.offlineSessions.entries())
+        .filter(([key]) => !toDelete.includes(key))
+        .sort((a, b) => a[1].lastActive - b[1].lastActive);
+
+      const excess = sorted.length - this.maxOfflineSessions;
+      for (let i = 0; i < excess; i++) {
+        toDelete.push(sorted[i][0]);
+      }
+    }
+
+    // 3. Delete sessions and their backlogs
+    for (const key of toDelete) {
+      this.offlineSessions.delete(key);
+      this.backlogs.delete(key);
+    }
+
+    if (toDelete.length > 0) {
+      console.log(`[Room ${this.id}] Cleaned up ${toDelete.length} offline sessions`);
+      // Notify dashboards after cleanup
+      this.broadcastDashboardSnapshot();
+    }
+  }
+
   /** 获取所有 sessions（在线 + 离线） */
   getAllSessions(): SessionSnapshot[] {
     const list: SessionSnapshot[] = [];
@@ -320,6 +371,14 @@ export class Room {
       list.push(offline);
     }
     return list;
+  }
+
+  /** Destroy room and cleanup timers */
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
   }
 
   /** 推送 dashboard 快照到所有 Dashboard 模式的 Debugger */
@@ -373,7 +432,11 @@ export class RoomRegistry {
   }
 
   delete(id: string): void {
-    this.rooms.delete(id);
+    const room = this.rooms.get(id);
+    if (room) {
+      room.destroy();
+      this.rooms.delete(id);
+    }
   }
 
   list(): Array<{ id: string; hasSdk: boolean; debuggers: number; sessions: number }> {

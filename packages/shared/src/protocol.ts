@@ -79,8 +79,23 @@ export interface NetworkRequestEvent {
   method: string;
   headers: Record<string, string>;
   body?: string;
-  /** 发起方：fetch / xhr / beacon / websocket */
-  initiator: 'fetch' | 'xhr' | 'beacon' | 'websocket';
+  /** 发起方：fetch / xhr / beacon / websocket / resource (CSS/JS/img/font/media etc.) */
+  initiator: 'fetch' | 'xhr' | 'beacon' | 'websocket' | 'link' | 'script' | 'img' | 'css' | 'xmlhttprequest' | 'fetch' | 'other';
+  /** Resource timing details (for resource initiator types) */
+  timing?: {
+    startTime: number;
+    fetchStart: number;
+    domainLookupStart: number;
+    domainLookupEnd: number;
+    connectStart: number;
+    connectEnd: number;
+    requestStart: number;
+    responseStart: number;
+    responseEnd: number;
+    transferSize: number;
+    encodedBodySize: number;
+    decodedBodySize: number;
+  };
 }
 
 export interface NetworkResponseEvent {
@@ -93,12 +108,18 @@ export interface NetworkResponseEvent {
   mimeType?: string;
   /** 耗时（毫秒） */
   duration: number;
+  /** 是否来自缓存 */
+  fromCache?: boolean;
+  /** 是否 CORS 阻止（transferSize=0 且 responseStart=0） */
+  corsBlocked?: boolean;
 }
 
 export interface NetworkErrorEvent {
   reqId: string;
   error: string;
   duration: number;
+  /** 错误类型：network / cors / timeout / abort */
+  errorType?: 'network' | 'cors' | 'timeout' | 'abort' | 'unknown';
 }
 
 export type StorageType = 'local' | 'session' | 'cookie';
