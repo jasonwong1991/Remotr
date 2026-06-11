@@ -18,7 +18,7 @@ export interface REMOTRConfig {
   mirror?: boolean;
   /** 设备 ID，默认自动生成并持久化到 localStorage */
   deviceId?: string;
-  /** 页面 ID，默认自动生成并持久化到 sessionStorage */
+  /** 页面 ID，默认由 URL 指纹确定性生成（同页面退出重进保持同一 session） */
   pageId?: string;
   /** 身份标识，例如用户名 */
   identity?: string;
@@ -93,12 +93,13 @@ function autoStart(): void {
   const server = script.getAttribute('data-server') || undefined;
   const mirror = script.getAttribute('data-mirror') !== 'false';
   const deviceId = script.getAttribute('data-device-id') || undefined;
+  const pageId = script.getAttribute('data-page-id') || undefined;
   const identity = script.getAttribute('data-identity') || undefined;
   const identityCookie = script.getAttribute('data-identity-cookie') || undefined;
 
   // 有 data-room 或 data-server 时视为自动启动模式
   if (script.hasAttribute('data-room') || script.hasAttribute('data-server') || script.hasAttribute('data-auto')) {
-    start({ room, server, mirror, deviceId, identity, identityCookie });
+    start({ room, server, mirror, deviceId, pageId, identity, identityCookie });
   }
 }
 
