@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { DEFAULT_PORT } from '@remotr/shared';
 import { startServer } from './index.js';
+import { loadRecordingConfig } from './recording.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -39,4 +40,15 @@ if (!existsSync(join(panelDir, 'index.html'))) {
   console.warn(`       请先运行: npm run build:debugger`);
 }
 
-startServer({ port, host, panelDir, sdkPath });
+// 录制：默认根目录在仓库根的 recordings/（可被 REMOTR_REC_DIR 覆盖）
+const recording = loadRecordingConfig(repoRoot);
+
+const { recorder } = startServer({ port, host, panelDir, sdkPath, recording });
+
+// 优雅关停：刷新录制流
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    recorder.destroy();
+    process.exit(0);
+  });
+}

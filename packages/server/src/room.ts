@@ -7,6 +7,7 @@ import type {
   DashboardSessionsEvent,
 } from '@remotr/shared';
 import { encodeFrame, makeEnvelope } from '@remotr/shared';
+import type { RecordingManager, SessionMeta } from './recording.js';
 
 /** SDK 端连接的 session 信息 */
 interface SessionParams {
@@ -81,19 +82,22 @@ export class Room {
   private readonly offlineSessionTTL: number; // milliseconds
   private readonly maxOfflineSessions: number;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly recorder: RecordingManager | null;
 
   constructor(
     id: string,
     maxBacklog = 500,
     maxRrwebBacklog = 1000,
     offlineSessionTTL = 10 * 60 * 1000, // 10 minutes
-    maxOfflineSessions = 100
+    maxOfflineSessions = 100,
+    recorder: RecordingManager | null = null
   ) {
     this.id = id;
     this.maxBacklog = maxBacklog;
     this.maxRrwebBacklog = maxRrwebBacklog;
     this.offlineSessionTTL = offlineSessionTTL;
     this.maxOfflineSessions = maxOfflineSessions;
+    this.recorder = recorder;
 
     // Start periodic cleanup (every 2 minutes). unref() so the timer doesn't
     // keep the Node process alive on shutdown.
@@ -160,6 +164,9 @@ export class Room {
 
       // 标记为离线，但保留 backlog
       this.offlineSessions.set(key, this.buildSessionSnapshot(member, false));
+
+      // 关闭该会话的录制段，刷新落盘
+      this.recorder?.closeSession(this.id, member.session);
     } else {
       this.debuggers.delete(member);
       // 清理该 debugger 的 pending replies
@@ -207,6 +214,19 @@ export class Room {
       if (frame.envelope.method === 'system.info') {
         from.systemInfo = frame.envelope.data as SystemInfoEvent;
       }
+
+      // 录制：在更新 backlog 之前追加，使段头基线反映"本帧之前"的状态，
+      // 本帧随后作为段内实时帧落盘，避免与基线重复。
+      if (this.recorder?.enabled) {
+        this.recorder.append(
+          this.id,
+          from.session,
+          raw,
+          () => this.buildRecordingBaseline(key, from),
+          this.buildRecordingMeta(from),
+        );
+      }
+
       this.recordBacklog(key, frame);
 
       // 路由到订阅了该 session 的 Debugger
@@ -326,6 +346,33 @@ export class Room {
     };
   }
 
+  /**
+   * 构建录制段头基线：system.info + 当前 rrweb backlog，编码为 JSON 行。
+   * 在 recordBacklog 之前调用，因此反映"本帧之前"的页面状态——使每段都能
+   * 从一个全量快照独立重建。
+   */
+  private buildRecordingBaseline(key: string, member: SdkMember): string[] {
+    const out: string[] = [];
+    if (member.systemInfo) {
+      out.push(encodeFrame({ kind: 'msg', envelope: makeEnvelope('system.info', member.systemInfo, 'sdk') }));
+    }
+    const backlog = this.backlogs.get(key);
+    if (backlog) {
+      for (const f of backlog.rrwebBacklog) out.push(encodeFrame(f));
+    }
+    return out;
+  }
+
+  /** 构建录制会话元信息（写入 meta.json）。 */
+  private buildRecordingMeta(member: SdkMember): SessionMeta {
+    return {
+      session: member.session,
+      identity: member.session.identity,
+      url: member.systemInfo?.url,
+      title: member.systemInfo?.title,
+    };
+  }
+
   /** 清理过期的离线 sessions */
   private cleanupOfflineSessions(): void {
     const now = Date.now();
@@ -423,11 +470,16 @@ export class Room {
 /** 房间注册表 */
 export class RoomRegistry {
   private rooms = new Map<string, Room>();
+  private readonly recorder: RecordingManager | null;
+
+  constructor(recorder: RecordingManager | null = null) {
+    this.recorder = recorder;
+  }
 
   get(id: string): Room {
     let room = this.rooms.get(id);
     if (!room) {
-      room = new Room(id);
+      room = new Room(id, undefined, undefined, undefined, undefined, this.recorder);
       this.rooms.set(id, room);
     }
     return room;

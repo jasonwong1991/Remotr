@@ -4,6 +4,7 @@ import { join, extname, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { decodeFrame } from '@remotr/shared';
 import { RoomRegistry } from './room.js';
+import { RecordingManager, loadRecordingConfig, type RecordingConfig } from './recording.js';
 
 export interface ServerOptions {
   port: number;
@@ -12,6 +13,8 @@ export interface ServerOptions {
   panelDir: string;
   /** 注入 SDK 文件路径 (sdk/dist/remotr.js) */
   sdkPath: string;
+  /** 录制配置；省略时从环境变量加载（根目录回退到 process.cwd()） */
+  recording?: RecordingConfig;
 }
 
 const MIME: Record<string, string> = {
@@ -25,10 +28,14 @@ const MIME: Record<string, string> = {
 };
 
 export function startServer(opts: ServerOptions) {
-  const rooms = new RoomRegistry();
+  const recCfg = opts.recording ?? loadRecordingConfig(process.cwd());
+  const recorder = new RecordingManager(recCfg);
+  void recorder.start();
+
+  const rooms = new RoomRegistry(recorder);
 
   const httpServer = createServer((req, res) => {
-    handleHttp(req, res, opts, rooms).catch((err) => {
+    handleHttp(req, res, opts, rooms, recorder).catch((err) => {
       res.writeHead(500);
       res.end(String(err));
     });
@@ -59,7 +66,7 @@ export function startServer(opts: ServerOptions) {
     );
   });
 
-  return { httpServer, wss, rooms };
+  return { httpServer, wss, rooms, recorder };
 }
 
 function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
@@ -147,6 +154,7 @@ async function handleHttp(
   res: ServerResponse,
   opts: ServerOptions,
   rooms: RoomRegistry,
+  recorder: RecordingManager,
 ): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
   let pathname = decodeURIComponent(url.pathname);
@@ -158,6 +166,35 @@ async function handleHttp(
   if (pathname === '/api/rooms') {
     res.writeHead(200, { 'Content-Type': MIME['.json'] });
     res.end(JSON.stringify(rooms.list()));
+    return;
+  }
+
+  // 录制 API：列表 + 单段下载
+  //   GET /api/rooms/:room/recordings              → 当天录制列表
+  //   GET /api/rooms/:room/recordings/:dir/:file    → 单段 JSONL
+  const recMatch = /^\/api\/rooms\/(.+)\/recordings(?:\/([^/]+)\/([^/]+))?$/.exec(pathname);
+  if (recMatch) {
+    const [, room, dir, file] = recMatch;
+    if (dir && file) {
+      const path = recorder.resolveSegmentPath(room, dir, file);
+      if (!path) {
+        res.writeHead(400);
+        res.end('Bad recording path');
+        return;
+      }
+      try {
+        const body = await readFile(path);
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8' });
+        res.end(body);
+      } catch {
+        res.writeHead(404);
+        res.end('Recording segment not found');
+      }
+      return;
+    }
+    const list = await recorder.listRecordings(room);
+    res.writeHead(200, { 'Content-Type': MIME['.json'] });
+    res.end(JSON.stringify(list));
     return;
   }
 

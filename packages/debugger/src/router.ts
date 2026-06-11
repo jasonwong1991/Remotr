@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 
-export type RouteName = 'dashboard' | 'session';
+export type RouteName = 'dashboard' | 'session' | 'replay';
 
 export interface RouteState {
   name: RouteName;
@@ -26,6 +26,9 @@ function parseHash(): RouteState {
 
   if (pathPart === '/session') {
     return { name: 'session', params };
+  }
+  if (pathPart === '/replay') {
+    return { name: 'replay', params };
   }
   return { name: 'dashboard', params };
 }
@@ -65,4 +68,9 @@ export function navigateToSession(
 export function getCurrentRoom(): string {
   const route = parseHash();
   return route.params.get('room') || 'default';
+}
+
+/** 导航到回放页（按 room 列出当天录制） */
+export function navigateToReplay(room: string = 'default'): void {
+  window.location.hash = `#/replay?room=${encodeURIComponent(room)}`;
 }

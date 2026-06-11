@@ -6,7 +6,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import type { SessionSnapshot, DashboardSessionsEvent } from '@remotr/shared';
 import { decodeFrame } from '@remotr/shared';
-import { navigateToSession } from '../router';
+import { navigateToSession, navigateToReplay } from '../router';
 import ThemeToggle from '../components/ThemeToggle';
 import LanguageToggle from '../components/LanguageToggle';
 import { useT, type MessageKey, type TFunc } from '../i18n';
@@ -138,6 +138,22 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
         </span>
 
         <div style={{ flex: 1 }} />
+
+        <button
+          onClick={() => navigateToReplay(room)}
+          title={t('replay.title')}
+          style={{
+            background: 'var(--bg-tertiary)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border)',
+            padding: '4px 10px',
+            borderRadius: 3,
+            cursor: 'pointer',
+            fontSize: 11,
+          }}
+        >
+          {t('replay.entry')}
+        </button>
 
         <ThemeToggle />
         <LanguageToggle />
