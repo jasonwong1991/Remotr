@@ -23,7 +23,7 @@ const LEVEL_BG: Record<string, string> = {
   info: 'var(--log-info-bg)',
 };
 
-function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactElement {
+export function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactElement {
   const t = useT();
   const [stackOpen, setStackOpen] = useState(false);
   const color = LEVEL_COLORS[record.level] ?? 'var(--text-primary)';

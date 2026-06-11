@@ -189,6 +189,45 @@ export interface DashboardSessionsEvent {
 }
 
 // ─────────────────────────────────────────────────────────
+// 回放录制（HTTP API: /api/rooms/:room/recordings）
+// ─────────────────────────────────────────────────────────
+
+/** 单个录制段的元信息 */
+export interface RecordingSegmentInfo {
+  /** 段文件名（如 "1718082000000.jsonl"），文件名即段起始时间戳 */
+  file: string;
+  /** 段起始时间戳（毫秒） */
+  startTs: number;
+  /** 段结束时间戳（毫秒，取文件最后写入时间） */
+  endTs: number;
+  /** 文件字节数 */
+  bytes: number;
+}
+
+/** 某个 session 当天的全部录制段 */
+export interface RecordingSessionInfo {
+  session: SessionId;
+  /** 磁盘目录名（用于拼接段下载 URL） */
+  dir: string;
+  identity?: string;
+  /** 页面信息（取自录制时的 system.info） */
+  url?: string;
+  title?: string;
+  /** 录制段列表，按 startTs 升序 */
+  segments: RecordingSegmentInfo[];
+}
+
+/** GET /api/rooms/:room/recordings 响应 */
+export interface RecordingListResponse {
+  room: string;
+  /** 日期（YYYY-MM-DD，server 本地时区） */
+  date: string;
+  /** 录制功能是否开启 */
+  enabled: boolean;
+  sessions: RecordingSessionInfo[];
+}
+
+// ─────────────────────────────────────────────────────────
 // 命令方法（调试端 → SDK）及其结果
 // ─────────────────────────────────────────────────────────
 

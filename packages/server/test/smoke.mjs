@@ -5,12 +5,20 @@ import { encodeFrame, decodeFrame, makeEnvelope } from '@remotr/shared';
 const PORT = process.env.PORT || 9777;
 const base = `ws://127.0.0.1:${PORT}/ws`;
 const room = 'smoketest-' + Date.now();
+// 会话路由要求 SDK 携带 deviceId/pageId；debugger 以同一 session 接入才能收到 backlog。
+const deviceId = 'dev_smoke';
+const pageId = 'page_smoke';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function connect(role) {
+function connect(role, session) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${base}?room=${room}&role=${role}`);
+    const params = new URLSearchParams({ room, role });
+    if (session) {
+      params.set('deviceId', session.deviceId);
+      params.set('pageId', session.pageId);
+    }
+    const ws = new WebSocket(`${base}?${params.toString()}`);
     ws.on('open', () => resolve(ws));
     ws.on('error', reject);
   });
@@ -24,7 +32,7 @@ function assert(cond, msg) {
 
 async function main() {
   // 1. SDK 先连接并发送事件（在 debugger 接入前 → 测试 backlog）
-  const sdk = await connect('sdk');
+  const sdk = await connect('sdk', { deviceId, pageId });
 
   // 发送 system.info（应被 backlog 保留并回放）
   sdk.send(encodeFrame({ kind: 'msg', envelope: makeEnvelope('system.info', {
@@ -39,7 +47,7 @@ async function main() {
   await wait(200);
 
   // 2. debugger 接入 → 应立即收到 backlog（system.info + console）
-  const dbg = await connect('debugger');
+  const dbg = await connect('debugger', { deviceId, pageId });
   const received = [];
   dbg.on('message', (raw) => {
     const f = decodeFrame(raw.toString());

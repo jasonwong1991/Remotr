@@ -3,14 +3,14 @@ import { useStore } from '../store';
 import type { NetworkRecord } from '../store';
 import { useT, type MessageKey, type TFunc } from '../i18n';
 
-function statusColor(status?: number): string {
+export function statusColor(status?: number): string {
   if (!status) return 'var(--status-pending)';
   if (status >= 200 && status < 300) return 'var(--status-2xx)';
   if (status >= 400) return 'var(--status-4xx)';
   return 'var(--text-secondary)';
 }
 
-function urlName(url?: string): string {
+export function urlName(url?: string): string {
   if (!url) return '(unknown)';
   try {
     const u = new URL(url);
@@ -42,7 +42,7 @@ function formatBytes(bytes: number): string {
 }
 
 /** Pretty-print a duration in ms (handles fractional values from Performance Timeline). */
-function formatMs(ms: number): string {
+export function formatMs(ms: number): string {
   if (ms <= 0) return '—';
   if (ms < 1) return '<1ms';
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -160,7 +160,7 @@ function CacheBadge({ t }: { t: TFunc }): React.ReactElement {
   );
 }
 
-function DetailPanel({ record }: { record: NetworkRecord }): React.ReactElement {
+export function DetailPanel({ record }: { record: NetworkRecord }): React.ReactElement {
   const t = useT();
   const [tab, setTab] = useState<'general' | 'req-headers' | 'res-headers' | 'req-body' | 'res-body' | 'timing'>('general');
   const tabs = ['general', 'req-headers', 'res-headers', 'req-body', 'res-body', 'timing'] as const;

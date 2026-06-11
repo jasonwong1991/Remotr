@@ -166,6 +166,25 @@ const en = {
   'htmlEdit.hint': '⌘/Ctrl + Enter to save · Esc to cancel',
   // ── page mirror ─────────────────────────────────────────
   'mirror.waiting': 'Waiting for page snapshot…',
+  // ── replay ──────────────────────────────────────────────
+  'replay.entry': '📼 Replay',
+  'replay.title': '📼 Replay',
+  'replay.backTitle': 'Back to Dashboard',
+  'replay.back': '← Dashboard',
+  'replay.sessions': 'Recorded sessions',
+  'replay.segments': 'Segments',
+  'replay.noRecordings': 'No recordings for today',
+  'replay.disabled': 'Recording is disabled on the server',
+  'replay.selectSession': 'Select a session on the left',
+  'replay.selectSegment': 'Select a segment to play',
+  'replay.notPlayable': 'This segment has no full snapshot and cannot be replayed',
+  'replay.loading': 'Loading…',
+  'replay.play': '▶ Play',
+  'replay.pause': '❚❚ Pause',
+  'replay.restart': '↺ Restart',
+  'replay.speed': 'Speed',
+  'replay.segmentCount': '{count} segments',
+  'replay.anonymous': '(anonymous)',
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -306,6 +325,24 @@ const zh: Record<MessageKey, string> = {
   'htmlEdit.title': '编辑 HTML',
   'htmlEdit.hint': '⌘/Ctrl + Enter 保存 · Esc 取消',
   'mirror.waiting': '等待页面快照…',
+  'replay.entry': '📼 回放',
+  'replay.title': '📼 回放',
+  'replay.backTitle': '返回控制台',
+  'replay.back': '← 控制台',
+  'replay.sessions': '录制会话',
+  'replay.segments': '录制段',
+  'replay.noRecordings': '今天暂无录制',
+  'replay.disabled': '服务端未开启录制',
+  'replay.selectSession': '请在左侧选择一个会话',
+  'replay.selectSegment': '选择一个录制段播放',
+  'replay.notPlayable': '该段缺少全量快照，无法回放',
+  'replay.loading': '加载中…',
+  'replay.play': '▶ 播放',
+  'replay.pause': '❚❚ 暂停',
+  'replay.restart': '↺ 重播',
+  'replay.speed': '速度',
+  'replay.segmentCount': '{count} 段',
+  'replay.anonymous': '(匿名)',
 };
 
 const dict: Record<Locale, Record<MessageKey, string>> = { en, zh };

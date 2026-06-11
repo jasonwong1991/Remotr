@@ -37,5 +37,8 @@ coverage/
 logs/
 *.log
 
+# Session replay recordings (daily, regenerated at runtime)
+recordings/
+
 # Documentation
 docs/

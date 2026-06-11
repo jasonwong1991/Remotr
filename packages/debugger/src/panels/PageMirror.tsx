@@ -323,7 +323,7 @@ export default function PageMirror(): React.ReactElement {
   );
 }
 
-function ScaleContainer({
+export function ScaleContainer({
   children,
   vpWidth,
   vpHeight,

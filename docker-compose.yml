@@ -12,6 +12,18 @@ services:
       - REMOTR_PORT=9777
       - REMOTR_HOST=0.0.0.0
       - NODE_ENV=production
+      # Session replay recording (see packages/server/src/recording.ts)
+      #   REMOTR_REC=off              disable recording (default: on)
+      #   REMOTR_REC_SEGMENT_SEC=30   segment length in seconds
+      #   REMOTR_REC_MAX_BYTES=1GB    disk quota (oldest segments dropped first)
+      #   REMOTR_REC_DIR=/app/recordings  storage root (only the current day is kept)
+      - REMOTR_REC=on
+      - REMOTR_REC_SEGMENT_SEC=30
+      - REMOTR_REC_MAX_BYTES=1GB
+      - REMOTR_REC_DIR=/app/recordings
+    volumes:
+      # Persist same-day recordings across container restarts (only today is retained)
+      - remotr-recordings:/app/recordings
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:9777/remotr.js', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
@@ -21,6 +33,9 @@ services:
       start_period: 40s
     networks:
       - remotr-network
+
+volumes:
+  remotr-recordings:
 
 networks:
   remotr-network:
