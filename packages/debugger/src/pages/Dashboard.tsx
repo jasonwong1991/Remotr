@@ -9,6 +9,7 @@ import { decodeFrame } from '@remotr/shared';
 import { navigateToSession, navigateToReplay } from '../router';
 import ThemeToggle from '../components/ThemeToggle';
 import LanguageToggle from '../components/LanguageToggle';
+import { parseDevice, deviceDisplay } from '../ua';
 import { useT, type MessageKey, type TFunc } from '../i18n';
 
 type GroupBy = 'identity' | 'device';
@@ -249,7 +250,11 @@ function SessionGroups({
   const t = useT();
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-      {Array.from(groups.entries()).map(([topKey, subMap]) => (
+      {Array.from(groups.entries()).map(([topKey, subMap]) => {
+        // device 分组时 topKey 是 deviceId → 解析成真实设备名（UA 取组内首个 session）
+        const topUa = Array.from(subMap.values())[0]?.[0]?.systemInfo?.ua;
+        const topLabel = groupBy === 'device' ? deviceDisplay(topKey, topUa) : topKey;
+        return (
         <div
           key={topKey}
           style={{
@@ -273,7 +278,7 @@ function SessionGroups({
             <span style={{ fontSize: 14 }}>
               {groupBy === 'identity' ? '👤' : '💻'}
             </span>
-            <strong style={{ color: 'var(--text-primary)' }}>{topKey}</strong>
+            <strong style={{ color: 'var(--text-primary)' }} title={topKey}>{topLabel}</strong>
             <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
               · {t('dashboard.pages', { count: Array.from(subMap.values()).reduce((sum, arr) => sum + arr.length, 0) })}
             </span>
@@ -292,7 +297,9 @@ function SessionGroups({
                 }}
               >
                 <span>{groupBy === 'identity' ? '💻' : '👤'}</span>
-                <code style={{ fontFamily: 'var(--font-mono)' }}>{subKey}</code>
+                <code style={{ fontFamily: 'var(--font-mono)' }} title={subKey}>
+                  {groupBy === 'identity' ? deviceDisplay(subKey, pages[0]?.systemInfo?.ua) : subKey}
+                </code>
               </div>
               <div
                 style={{
@@ -308,7 +315,8 @@ function SessionGroups({
             </div>
           ))}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -396,6 +404,7 @@ function SessionCard({ session, room }: { session: SessionSnapshot; room: string
       </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, fontSize: 10 }}>
+        {parseDevice(ua) && <Tag color="var(--accent-blue)">{parseDevice(ua)}</Tag>}
         <Tag>{browser}</Tag>
         {viewport && (
           <Tag>

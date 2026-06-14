@@ -52,6 +52,16 @@ export interface SelectedElementData {
   matchedRules: MatchedRule[] | null;
 }
 
+/** Sources 面板的跳转目标 */
+export interface SourceViewTarget {
+  /** 可取的脚本 URL（SourcesPanel 据此 fetch 内容与 map） */
+  scriptUrl: string;
+  /** 该脚本 map 内的原始源路径；设置时展示还原后的原始源码 */
+  source?: string;
+  /** 高亮并滚动到的行号（1-based） */
+  line?: number;
+}
+
 interface DebuggerState {
   connStatus: ConnStatus;
   systemInfo: SystemInfoEvent | null;
@@ -67,6 +77,8 @@ interface DebuggerState {
   pickerActive: boolean;
   pickerPending: boolean;
   pickerError: string | null;
+  /** Sources 面板跳转目标（由 Console 还原后点击触发） */
+  sourceView: SourceViewTarget | null;
 
   // Actions
   setConnStatus: (s: ConnStatus) => void;
@@ -90,6 +102,8 @@ interface DebuggerState {
   setPickerActive: (active: boolean) => void;
   setPickerPending: (pending: boolean) => void;
   setPickerError: (error: string | null) => void;
+  requestSourceView: (target: SourceViewTarget) => void;
+  clearSourceView: () => void;
   /** 重置整个 store（用于切换 session 时） */
   reset: () => void;
   /** 重置 session 运行时数据但保留连接状态（用于页面刷新时） */
@@ -121,6 +135,7 @@ export const useStore = create<DebuggerState>((set) => ({
   pickerActive: false,
   pickerPending: false,
   pickerError: null,
+  sourceView: null,
 
   setConnStatus: (connStatus) => set({ connStatus }),
   setSystemInfo: (systemInfo) => set({ systemInfo }),
@@ -220,6 +235,9 @@ export const useStore = create<DebuggerState>((set) => ({
   setPickerPending: (pickerPending) => set({ pickerPending }),
   setPickerError: (pickerError) => set({ pickerError }),
 
+  requestSourceView: (sourceView) => set({ sourceView }),
+  clearSourceView: () => set({ sourceView: null }),
+
   reset: () =>
     set({
       connStatus: 'connecting',
@@ -235,6 +253,7 @@ export const useStore = create<DebuggerState>((set) => ({
       pickerActive: false,
       pickerPending: false,
       pickerError: null,
+      sourceView: null,
     }),
 
   resetSessionDataPreserveConnection: () =>
@@ -252,5 +271,6 @@ export const useStore = create<DebuggerState>((set) => ({
       pickerActive: false,
       pickerPending: false,
       pickerError: null,
+      sourceView: null,
     })),
 }));

@@ -67,6 +67,7 @@ const en = {
   'tab.network': 'network',
   'tab.elements': 'elements',
   'tab.storage': 'storage',
+  'tab.sources': 'sources',
   // ── elements sub-tabs (ElementsPanel) ───────────────────
   'tab.styles': 'Styles',
   'tab.computed': 'Computed',
@@ -76,6 +77,22 @@ const en = {
   'console.filter': 'Filter…',
   'console.evalPlaceholder': 'Evaluate JavaScript expression…',
   'console.stack': 'stack',
+  // ── sources panel ───────────────────────────────────────
+  'sources.title': 'Sources',
+  'sources.selectScript': 'Select a script to view its source.',
+  'sources.noScripts': 'No scripts found',
+  'sources.loading': 'Loading…',
+  'sources.resolve': 'resolve source',
+  'sources.resolving': 'resolving…',
+  'sources.noFrames': 'No resolvable frames',
+  'sources.jumpTitle': 'Jump to source',
+  // ── mcp (copy for Claude Code) ──────────────────────────
+  'mcp.copy': '🤖 Copy for AI fix',
+  'mcp.copied': '✓ Copied',
+  'mcp.copyTitle': 'Copy MCP context + prompt to paste into Claude Code',
+  'mcp.promptIntro': "Use the remotr MCP to locate and fix this page's runtime error, mapping it back to source in this repo:",
+  'mcp.promptSteps': 'Call remotr_get_errors, then remotr_get_context (deviceId/pageId above, errorIndex from 0). Use the source-map-resolved location + code snippet + console/network context to locate and fix it in this repo.',
+  'mcp.promptConfigNote': 'If the remotr MCP is not configured yet, add it to your project .mcp.json:',
   // ── network panel ───────────────────────────────────────
   'network.filterUrl': 'Filter by URL…',
   'network.requests': '{count} requests',
@@ -185,6 +202,7 @@ const en = {
   'replay.speed': 'Speed',
   'replay.segmentCount': '{count} segments',
   'replay.anonymous': '(anonymous)',
+  'replay.showAll': 'Show all sessions',
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -238,6 +256,7 @@ const zh: Record<MessageKey, string> = {
   'tab.network': '网络',
   'tab.elements': '元素',
   'tab.storage': '存储',
+  'tab.sources': '源码',
   'tab.styles': '样式',
   'tab.computed': '计算后',
   'tab.boxModel': '盒模型',
@@ -245,6 +264,20 @@ const zh: Record<MessageKey, string> = {
   'console.filter': '筛选…',
   'console.evalPlaceholder': '执行 JavaScript 表达式…',
   'console.stack': '堆栈',
+  'sources.title': '源码',
+  'sources.selectScript': '选择脚本查看源码。',
+  'sources.noScripts': '未发现脚本',
+  'sources.loading': '加载中…',
+  'sources.resolve': '还原源码',
+  'sources.resolving': '还原中…',
+  'sources.noFrames': '无可还原的栈帧',
+  'sources.jumpTitle': '跳转到源码',
+  'mcp.copy': '🤖 复制给 AI 修复',
+  'mcp.copied': '✓ 已复制',
+  'mcp.copyTitle': '复制 MCP 上下文与提示词，粘贴给 Claude Code 定位修复报错',
+  'mcp.promptIntro': '用 remotr MCP 定位并修复此页面的运行时报错，对应到本仓库源码：',
+  'mcp.promptSteps': '依次调用 remotr_get_errors、remotr_get_context（deviceId/pageId 同上，errorIndex 从 0 开始），用返回的还原源码位置 + 源码片段 + console/network 上下文，定位到本仓库源文件并修复。',
+  'mcp.promptConfigNote': '若尚未配置 remotr MCP，在项目 .mcp.json 中加入：',
   'network.filterUrl': '按 URL 筛选…',
   'network.requests': '{count} 个请求',
   'network.name': '名称',
@@ -343,6 +376,7 @@ const zh: Record<MessageKey, string> = {
   'replay.speed': '速度',
   'replay.segmentCount': '{count} 段',
   'replay.anonymous': '(匿名)',
+  'replay.showAll': '显示全部会话',
 };
 
 const dict: Record<Locale, Record<MessageKey, string>> = { en, zh };

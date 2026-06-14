@@ -118,7 +118,8 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
         const validMethods = [
           'system.info', 'console.entry', 'network.request', 'network.requestBody',
           'network.response', 'network.responseBody', 'storage.set', 'storage.delete',
-          'storage.clear', 'dom.rrweb', 'elements.picked', 'eval.run'
+          'storage.clear', 'dom.rrweb', 'elements.picked', 'eval.run', 'page.error',
+          'page.reload', 'sources.list', 'sources.fetch'
         ];
 
         const methodPrefix = frame.envelope.method.split('.')[0];

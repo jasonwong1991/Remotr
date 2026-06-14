@@ -3,6 +3,7 @@ import { installConsole } from './plugins/console.js';
 import { installNetwork } from './plugins/network.js';
 import { installStorage } from './plugins/storage.js';
 import { installPage } from './plugins/page.js';
+import { installSources } from './plugins/sources.js';
 import { installRrweb } from './plugins/rrweb.js';
 import { installElements } from './plugins/elements.js';
 import { SDK_VERSION } from './version.js';
@@ -54,6 +55,7 @@ export function start(config: REMOTRConfig = {}): void {
   installNetwork(transport);
   installStorage(transport);
   installPage(transport);
+  installSources(transport);
   if (mirror) installRrweb(transport);
   installElements(transport);
 

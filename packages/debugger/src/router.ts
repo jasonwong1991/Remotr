@@ -70,7 +70,12 @@ export function getCurrentRoom(): string {
   return route.params.get('room') || 'default';
 }
 
-/** 导航到回放页（按 room 列出当天录制） */
-export function navigateToReplay(room: string = 'default'): void {
-  window.location.hash = `#/replay?room=${encodeURIComponent(room)}`;
+/** 导航到回放页（按 room 列出当天录制；可携带 session 直接定位） */
+export function navigateToReplay(room: string = 'default', deviceId?: string, pageId?: string): void {
+  const params = new URLSearchParams({ room });
+  if (deviceId && pageId) {
+    params.set('deviceId', deviceId);
+    params.set('pageId', pageId);
+  }
+  window.location.hash = `#/replay?${params.toString()}`;
 }

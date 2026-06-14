@@ -4,6 +4,7 @@ import { sendCommand } from '../../ws';
 import HtmlEditModal from './HtmlEditModal';
 import { NODE_TYPE, type RrwebNode } from './domTree';
 import { useT } from '../../i18n';
+import { copyToClipboard } from '../../clipboard';
 
 function attrString(attrs?: Record<string, string | number | boolean | null>): string {
   if (!attrs) return '';
@@ -138,28 +139,6 @@ function generateOuterHTML(node: RrwebNode): string {
 }
 
 /** Copy text to clipboard with a graceful fallback for insecure contexts. */
-async function copyToClipboard(text: string): Promise<void> {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-  } catch {
-    // fall through to legacy path
-  }
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  try {
-    document.execCommand('copy');
-  } finally {
-    document.body.removeChild(ta);
-  }
-}
-
 // ─────────────────────────────────────────────────────────
 // Forced pseudo-state
 // ─────────────────────────────────────────────────────────

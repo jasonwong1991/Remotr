@@ -213,6 +213,8 @@ export interface RecordingSessionInfo {
   /** 页面信息（取自录制时的 system.info） */
   url?: string;
   title?: string;
+  /** UA（用于在回放列表解析展示真实设备名） */
+  ua?: string;
   /** 录制段列表，按 startTs 升序 */
   segments: RecordingSegmentInfo[];
 }
@@ -330,6 +332,36 @@ export interface ElementsSetForcedStatesCmd {
 }
 
 // ─────────────────────────────────────────────────────────
+// Sources（源码查看 + Source Map 还原）
+// ─────────────────────────────────────────────────────────
+
+/** 页面加载的脚本资源 */
+export interface ScriptInfo {
+  url: string;
+}
+
+export interface SourcesListCmd {}
+export interface SourcesListResult {
+  scripts: ScriptInfo[];
+}
+
+export interface SourcesFetchCmd {
+  url: string;
+}
+export interface SourcesFetchResult {
+  url: string;
+  content: string;
+  /** 原始 //# sourceMappingURL 注释值（绝对化后的 url 或 data: URI） */
+  sourceMappingURL?: string;
+  /** SDK 代取/解析出的 source map JSON 字符串（外链与内联 base64 均归一为此） */
+  map?: string;
+  /** 取脚本失败时的原因；取到则为空 */
+  error?: string;
+  /** content/map 因超过体积上限被截断时为 true */
+  truncated?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────
 // 方法名 → 数据类型 映射表（单一事实来源，DRY）
 // ─────────────────────────────────────────────────────────
 
@@ -364,6 +396,8 @@ export interface MethodData {
   'elements.setHTML': ElementsSetHTMLCmd;
   'elements.scrollIntoView': ElementsScrollIntoViewCmd;
   'elements.setForcedStates': ElementsSetForcedStatesCmd;
+  'sources.list': SourcesListCmd;
+  'sources.fetch': SourcesFetchCmd;
   'elements.picked': ElementsPickedEvent;
 }
 
@@ -400,4 +434,6 @@ export type CommandMethod =
   | 'elements.deleteNode'
   | 'elements.setHTML'
   | 'elements.scrollIntoView'
-  | 'elements.setForcedStates';
+  | 'elements.setForcedStates'
+  | 'sources.list'
+  | 'sources.fetch';

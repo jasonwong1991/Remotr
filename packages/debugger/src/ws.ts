@@ -9,6 +9,7 @@ import {
   type SpyAtom,
 } from '@remotr/shared';
 import { useStore } from './store';
+import { clearSourcesCache } from './sources';
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 10_000;
@@ -181,6 +182,7 @@ export function reconnect(): void {
   // 重置 store
   const store = useStore.getState();
   store.reset?.();
+  clearSourcesCache();
   connect();
 }
 
@@ -204,6 +206,7 @@ export function switchTargetSession(session: SessionId | null): void {
   // Reset store when switching
   const store = useStore.getState();
   store.reset();
+  clearSourcesCache();
 
   // If switching sessions (not just clearing), reconnect
   if (session !== null) {
@@ -227,6 +230,7 @@ function nextId(): string {
 export function sendCommand<M extends CommandMethod>(
   method: M,
   data: MethodData[M],
+  timeoutMs: number = CMD_TIMEOUT_MS,
 ): Promise<Reply> {
   return new Promise((resolve, reject) => {
     if (!_ws || _ws.readyState !== WebSocket.OPEN) {
@@ -245,7 +249,7 @@ export function sendCommand<M extends CommandMethod>(
     const timer = setTimeout(() => {
       _pending.delete(id);
       reject(new Error(`Command ${method} timed out`));
-    }, CMD_TIMEOUT_MS);
+    }, timeoutMs);
 
     _pending.set(id, { resolve, timer });
     _ws.send(frame);

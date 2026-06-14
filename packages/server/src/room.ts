@@ -218,12 +218,20 @@ export class Room {
       // 录制：在更新 backlog 之前追加，使段头基线反映"本帧之前"的状态，
       // 本帧随后作为段内实时帧落盘，避免与基线重复。
       if (this.recorder?.enabled) {
+        // 时间锚点：rrweb 帧用事件自带时间戳（SDK 时钟），其余用信封时间戳，
+        // 供基线压缩对齐，避免段时长把基线之前的空闲间隔算进去。
+        const d = frame.envelope.data as { event?: { timestamp?: number } } | undefined;
+        const anchorTs =
+          (frame.envelope.method === 'dom.rrweb' ? d?.event?.timestamp : undefined) ??
+          frame.envelope.timestamp ??
+          Date.now();
         this.recorder.append(
           this.id,
           from.session,
           raw,
-          () => this.buildRecordingBaseline(key, from),
+          () => this.buildRecordingBaseline(key, from, anchorTs),
           this.buildRecordingMeta(from),
+          frame.envelope.method,
         );
       }
 
@@ -350,15 +358,52 @@ export class Room {
    * 构建录制段头基线：system.info + 当前 rrweb backlog，编码为 JSON 行。
    * 在 recordBacklog 之前调用，因此反映"本帧之前"的页面状态——使每段都能
    * 从一个全量快照独立重建。
+   *
+   * 基线时间重定位：backlog 里的 rrweb 事件保留原始时间戳，页面空闲多久基线
+   * 就比锚点旧多久——直接拷贝会让该段回放时长虚增出整段空闲（幻影时长）。
+   * 这里把整组基线事件平移到锚点紧前（保留组内相对间隔），回放时长即真实
+   * 活动时长。锚点与事件时间戳同属 SDK 时钟，不受服务端时钟偏差影响。
    */
-  private buildRecordingBaseline(key: string, member: SdkMember): string[] {
+  private buildRecordingBaseline(key: string, member: SdkMember, anchorTs: number): string[] {
     const out: string[] = [];
     if (member.systemInfo) {
-      out.push(encodeFrame({ kind: 'msg', envelope: makeEnvelope('system.info', member.systemInfo, 'sdk') }));
+      out.push(
+        encodeFrame({
+          kind: 'msg',
+          envelope: makeEnvelope('system.info', member.systemInfo, 'sdk', null, anchorTs),
+        }),
+      );
     }
     const backlog = this.backlogs.get(key);
-    if (backlog) {
-      for (const f of backlog.rrwebBacklog) out.push(encodeFrame(f));
+    if (!backlog || backlog.rrwebBacklog.length === 0) return out;
+
+    let lastTs = 0;
+    for (const f of backlog.rrwebBacklog) {
+      if (f.kind !== 'msg') continue;
+      const ev = (f.envelope.data as { event?: { timestamp?: number } }).event;
+      if (ev?.timestamp && ev.timestamp > lastTs) lastTs = ev.timestamp;
+    }
+    const offset = lastTs > 0 ? Math.max(0, anchorTs - lastTs - 1) : 0;
+
+    for (const f of backlog.rrwebBacklog) {
+      if (f.kind !== 'msg') continue;
+      const data = f.envelope.data as { event?: { timestamp?: number } };
+      const ev = data.event;
+      if (offset === 0 || !ev || typeof ev.timestamp !== 'number') {
+        out.push(encodeFrame(f));
+        continue;
+      }
+      // 浅拷贝信封/数据/事件三层后改时间戳；backlog 对象与实时回放共享，不可原地改
+      out.push(
+        encodeFrame({
+          kind: 'msg',
+          envelope: {
+            ...f.envelope,
+            timestamp: f.envelope.timestamp + offset,
+            data: { ...data, event: { ...ev, timestamp: ev.timestamp + offset } },
+          },
+        }),
+      );
     }
     return out;
   }
@@ -370,6 +415,7 @@ export class Room {
       identity: member.session.identity,
       url: member.systemInfo?.url,
       title: member.systemInfo?.title,
+      ua: member.systemInfo?.ua,
     };
   }
 

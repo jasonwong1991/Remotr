@@ -70,7 +70,8 @@ export default function ReplayPlayer({
       replayer = new Replayer(playable, {
         root: containerRef.current,
         speed,
-        skipInactive: false,
+        // 自动快进无交互区间（空闲页面的段里常见），避免观看空白
+        skipInactive: true,
         showWarning: false,
         showDebug: false,
         mouseTail: false,

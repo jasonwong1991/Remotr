@@ -11,11 +11,15 @@ import ConsolePanel from '../panels/ConsolePanel';
 import NetworkPanel from '../panels/NetworkPanel';
 import ElementsPanel from '../panels/ElementsPanel';
 import StoragePanel from '../panels/StoragePanel';
+import SourcesPanel from '../panels/SourcesPanel';
 import ThemeToggle from '../components/ThemeToggle';
 import LanguageToggle from '../components/LanguageToggle';
+import { navigateToReplay } from '../router';
+import { deviceDisplay } from '../ua';
 import { useT, type MessageKey } from '../i18n';
+import { copyToClipboard } from '../clipboard';
 
-type Tab = 'console' | 'network' | 'elements' | 'storage';
+type Tab = 'console' | 'network' | 'elements' | 'storage' | 'sources';
 
 const STATUS_COLORS: Record<string, string> = {
   connected: '#4caf50',
@@ -33,10 +37,12 @@ interface SessionViewProps {
 export default function SessionView({ room, deviceId, pageId, onBack }: SessionViewProps): React.ReactElement {
   const connStatus = useStore((s) => s.connStatus);
   const systemInfo = useStore((s) => s.systemInfo);
+  const sourceView = useStore((s) => s.sourceView);
   const t = useT();
   const [activeTab, setActiveTab] = useState<Tab>('elements');
   const [reloadPending, setReloadPending] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const [mcpCopied, setMcpCopied] = useState(false);
 
   const [leftWidth, setLeftWidth] = useState(50);
   const dragging = useRef(false);
@@ -59,6 +65,31 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
       setReloadPending(false);
     }
   }, []);
+
+  // 复制 MCP 对接所需内容 + 提示词，粘贴给 Claude Code 即可定位并修复本页报错
+  const handleCopyMcp = useCallback(async () => {
+    const server = window.location.origin;
+    const url = useStore.getState().systemInfo?.url;
+    const lines = [
+      t('mcp.promptIntro'),
+      '',
+      `- server: ${server}`,
+      `- room: ${room}`,
+      `- deviceId: ${deviceId}`,
+      `- pageId: ${pageId}`,
+      ...(url ? [`- url: ${url}`] : []),
+      '',
+      t('mcp.promptSteps'),
+      '',
+      t('mcp.promptConfigNote'),
+      '```json',
+      `"remotr": { "command": "node", "args": ["<remotr-repo>/packages/mcp/dist/cli.js", "--server", "${server}", "--room", "${room}"] }`,
+      '```',
+    ];
+    await copyToClipboard(lines.join('\n'));
+    setMcpCopied(true);
+    setTimeout(() => setMcpCopied(false), 1500);
+  }, [room, deviceId, pageId, t]);
 
   const onMouseDown = useCallback(() => {
     dragging.current = true;
@@ -88,7 +119,12 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
     };
   }, [onMouseMove, onMouseUp]);
 
-  const tabs: Tab[] = ['elements', 'console', 'network', 'storage'];
+  // Console 还原后点击源码位置 → 自动切到 Sources 标签
+  useEffect(() => {
+    if (sourceView) setActiveTab('sources');
+  }, [sourceView]);
+
+  const tabs: Tab[] = ['elements', 'console', 'sources', 'network', 'storage'];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
@@ -117,6 +153,14 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
           {reloadPending ? '⟳...' : t('session.reload')}
         </button>
 
+        <button onClick={() => navigateToReplay(room, deviceId, pageId)} title={t('replay.title')}>
+          {t('replay.entry')}
+        </button>
+
+        <button onClick={handleCopyMcp} title={t('mcp.copyTitle')}>
+          {mcpCopied ? t('mcp.copied') : t('mcp.copy')}
+        </button>
+
         <ThemeToggle />
         <LanguageToggle />
 
@@ -141,7 +185,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
         </span>
         <span style={{ color: 'var(--text-muted)' }}>·</span>
         <span title={`${t('session.deviceLabel')} ${deviceId}`} style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
-          📱 {deviceId.slice(0, 12)}
+          📱 {deviceDisplay(deviceId, systemInfo?.ua)}
         </span>
         <span style={{ color: 'var(--text-muted)' }}>·</span>
         <span title={`${t('session.pageLabel')} ${pageId}`} style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
@@ -256,6 +300,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
 
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {activeTab === 'console' && <ConsolePanel />}
+            {activeTab === 'sources' && <SourcesPanel />}
             {activeTab === 'network' && <NetworkPanel />}
             {activeTab === 'elements' && <ElementsPanel />}
             {activeTab === 'storage' && <StoragePanel />}

@@ -5,12 +5,14 @@
   "description": "Remote debugging made effortless — inject a script and debug any webpage with a local DevTools-like interface",
   "workspaces": [
     "packages/shared",
+    "packages/sourcemap",
     "packages/sdk",
     "packages/server",
-    "packages/debugger"
+    "packages/debugger",
+    "packages/mcp"
   ],
   "scripts": {
-    "build": "npm run build -w @remotr/shared && npm run build -w @remotr/sdk && npm run build -w @remotr/debugger && npm run build -w @remotr/server",
+    "build": "npm run build -w @remotr/shared && npm run build -w @remotr/sourcemap && npm run build -w @remotr/sdk && npm run build -w @remotr/debugger && npm run build -w @remotr/server && npm run build -w @remotr/mcp",
     "build:sdk": "npm run build -w @remotr/sdk",
     "build:debugger": "npm run build -w @remotr/debugger",
     "dev:debugger": "npm run dev -w @remotr/debugger",

@@ -28,7 +28,14 @@ export default function App(): React.ReactElement {
   }
 
   if (route.name === 'replay') {
-    return <ReplayView room={room} onBack={() => navigateToDashboard(room)} />;
+    return (
+      <ReplayView
+        room={room}
+        initialDeviceId={route.params.get('deviceId') ?? undefined}
+        initialPageId={route.params.get('pageId') ?? undefined}
+        onBack={() => navigateToDashboard(room)}
+      />
+    );
   }
 
   return <Dashboard room={room} />;

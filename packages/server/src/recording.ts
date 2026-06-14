@@ -28,6 +28,8 @@ export interface SessionMeta {
   identity?: string;
   url?: string;
   title?: string;
+  /** UA（回放列表解析展示真实设备名用） */
+  ua?: string;
 }
 
 /** 解析 "1GB" / "500MB" / "1073741824" 形式的字节数 */
@@ -82,9 +84,20 @@ interface SessionRecorder {
   buffer: string[];
   /** 是否正在异步打开新段流 */
   opening: boolean;
-  /** 已写入 meta.json 的目录（避免重复写） */
+  /** 已写入**完整** meta.json（含 ua/url）。SDK 启动时各插件并发发帧，
+   *  首段常先于 system.info 建目录——不完整的 meta 在后续轮转时重写补全。 */
   metaWritten: boolean;
+  /** 当前段内实时帧数（轮转兜底阈值用，防止纯非 rrweb 噪声把单段撑到无限大） */
+  eventCount: number;
 }
+
+/**
+ * 无 rrweb 活动时允许轮转的事件数兜底阈值。
+ * 空闲页面只有零星 storage 心跳（约 2 条/分钟），远达不到该值——段保持打开，
+ * 不再每 30s 产出一个只有陈旧基线的"0 秒垃圾段"；而 console/network 刷屏
+ * 的页面会很快越过阈值，正常轮转以约束单段体积。
+ */
+const ROTATE_MIN_EVENTS = 200;
 
 /**
  * RecordingManager — 录制管理器（server 单例）。
@@ -145,12 +158,18 @@ export class RecordingManager {
   /**
    * 追加一帧到当前段。必要时先轮转（关闭旧段、以基线开启新段）。
    *
+   * 轮转门控：超过段时长后，**仅当来帧是 rrweb（画面活动）** 时才轮转——这样
+   * 新的活动爆发总是落在带新鲜基线的新段开头，而空闲期的零星 storage/console
+   * 心跳不会产出"只有陈旧基线的 0 秒垃圾段"，也不会反复拷贝基线浪费磁盘。
+   * 无画面活动的页面由 ROTATE_MIN_EVENTS 兜底约束单段体积。
+   *
    * 重要：调用方须在更新内存 backlog **之前**调用本方法，使 baseline() 反映
    * "本帧之前"的状态——本帧随后作为段内实时帧写入，避免与基线重复。
    *
    * @param raw       原始帧 JSON 字符串（与转发给 debugger 的完全一致）
    * @param baseline  段头基线生产函数：返回 system.info + rrweb backlog 的 JSON 行
    * @param meta      会话元信息（写入 meta.json）
+   * @param method    来帧的方法名（轮转门控用）
    */
   append(
     room: string,
@@ -158,6 +177,7 @@ export class RecordingManager {
     raw: string,
     baseline: () => string[],
     meta: SessionMeta,
+    method: string,
   ): void {
     if (!this.cfg.enabled) return;
     const k = this.key(room, session);
@@ -172,22 +192,29 @@ export class RecordingManager {
         buffer: [],
         opening: false,
         metaWritten: false,
+        eventCount: 0,
       };
       this.recorders.set(k, rec);
     }
 
     const now = Date.now();
-    const needRotate =
-      !rec.opening &&
-      (rec.stream === null && rec.buffer.length === 0
-        ? true // 首段
-        : now - rec.startTs >= this.cfg.segmentMs || localDate(now) !== rec.date);
+    let needRotate = false;
+    if (!rec.opening) {
+      if (rec.stream === null && rec.buffer.length === 0) {
+        needRotate = true; // 首段
+      } else if (localDate(now) !== rec.date) {
+        needRotate = true; // 跨天：归档到新日期目录
+      } else if (now - rec.startTs >= this.cfg.segmentMs) {
+        needRotate = method === 'dom.rrweb' || rec.eventCount >= ROTATE_MIN_EVENTS;
+      }
+    }
 
     if (needRotate) {
       this.rotate(rec, now, baseline(), meta);
     }
 
     this.enqueue(rec, raw);
+    rec.eventCount++;
   }
 
   /** 入队/写入一行。流未就绪则缓冲，就绪则直写。 */
@@ -217,6 +244,7 @@ export class RecordingManager {
     rec.startTs = now;
     rec.date = localDate(now);
     rec.opening = true;
+    rec.eventCount = 0;
     // 基线先入缓冲，确保它在任何段内实时帧之前落盘。
     rec.buffer = baselineLines.slice();
 
@@ -236,7 +264,8 @@ export class RecordingManager {
       await mkdir(dir, { recursive: true });
       if (!rec.metaWritten) {
         await writeFile(join(dir, 'meta.json'), JSON.stringify(meta)).catch(() => {});
-        rec.metaWritten = true;
+        // ua 来自 system.info；没拿到说明 meta 还不完整，下次轮转重写补全
+        rec.metaWritten = Boolean(meta.ua);
       }
       const stream = createWriteStream(filePath, { flags: 'a' });
       // 打开期间累积的帧（基线 + 实时）一次性按序刷出。
@@ -423,6 +452,7 @@ export class RecordingManager {
         identity: meta.identity,
         url: meta.url,
         title: meta.title,
+        ua: meta.ua,
         segments,
       };
       resp.sessions.push(info);

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@remotr/shared": "*",
+    "@remotr/sourcemap": "*",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "rrweb": "^2.0.0-alpha.4",

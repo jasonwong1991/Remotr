@@ -13,6 +13,8 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 - 🌐 **Network** — Intercepts `fetch` / `XHR` / `sendBeacon`, displaying URL/status/timing/headers/body
 - 🧬 **Elements** — Live DOM tree rebuilt from the rrweb mirror (hide/delete/edit reflect instantly); DevTools-style right-click menu: copy selector/XPath/JS-path/outerHTML, force pseudo-states (`:hover`/`:focus`/…), hide/edit-HTML/delete, scroll into view; inspect & edit matched rules, computed styles, and box model; element picker
 - 💾 **Storage** — View, edit, and delete localStorage / sessionStorage / Cookies (bidirectional)
+- 🗺️ **Sources & Source Maps** — Browse the page's scripts; the SDK fetches scripts and `.map` files same-origin (bypassing panel CORS) and resolves minified stacks back to original `src/Foo.tsx:42` with a code snippet. Console errors get a "resolve source" button that jumps straight to the original line.
+- 🤖 **AI-Assisted Fixing (MCP)** — A built-in MCP server exposes live errors, source-map-resolved stacks, and console/network context to **Claude Code**. One "Copy for AI fix" button in the session view hands Claude everything it needs to locate and fix the error in your real repo. Graceful degradation: works without source maps too (resolves to minified position + full context).
 - 🔌 **Zero-config Injection** — One `<script>` tag, auto-connects with exponential backoff reconnection
 - 📦 **Single-file SDK** — Built as a single IIFE with esbuild (~60KB gzipped, includes rrweb), no dependencies needed on target page
 - 🔀 **Multi-Device/Multi-Page** — Each device and browser tab is tracked separately with persistent device IDs (localStorage) and ephemeral page IDs (sessionStorage). Perfect for debugging multiple users or testing across devices.
@@ -46,6 +48,7 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 │  │ │   - Console             │   │  │
 │  │ │   - Network             │   │  │
 │  │ │   - Storage             │   │  │
+│  │ │   - Sources             │   │  │
 │  │ │   - DOM (rrweb)         │   │  │
 │  │ └─────────────────────────┘   │  │
 │  └───────────────┬───────────────┘  │
@@ -96,7 +99,7 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
                                         └───────────────────────────────┘
 ```
 
-Four packages sharing a typed protocol via `@remotr/shared`:
+Six packages sharing a typed protocol via `@remotr/shared`:
 
 | Package             | Description |
 |---------------------|-------------|
@@ -104,6 +107,37 @@ Four packages sharing a typed protocol via `@remotr/shared`:
 | `packages/sdk`      | Injection SDK (TypeScript → esbuild IIFE single file) |
 | `packages/server`   | Relay server (Node + ws), hosts panel and injection script |
 | `packages/debugger` | Debug panel (React + Vite + Zustand + rrweb Replayer) |
+| `packages/sourcemap`| Pure source-map resolver (source-map-js); turns minified `bundle:line:col` into original source + snippet. Shared by panel and MCP. |
+| `packages/mcp`      | MCP server (stdio) exposing live errors + resolved stacks + context to Claude Code |
+
+### AI-Assisted Error Fixing
+
+Remotr can hand a runtime error — resolved back to your original source — to **Claude Code** via MCP, so the AI fixes the real file in your repo.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                  AI-Assisted Error Fixing (Source Maps + MCP)                   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+   Page throws error  ──►  page.error { message, stack }          (SDK, same-origin)
+                                      │
+                                      ▼
+        sources.fetch ◄── debugger / MCP parses stack (url:line:col)
+              │
+              ▼  SDK fetches script + .map same-origin (bypasses panel CORS)
+        @remotr/sourcemap  ──►  original src/Foo.tsx:42:10  +  code snippet
+              │
+   ┌──────────┴───────────────────────────────┐
+   ▼                                           ▼
+ Sources panel + Console "resolve"      @remotr/mcp (stdio MCP server)
+ click → jump to original source        tools: list_sessions / get_errors /
+                                                resolve_error / get_context
+                                               │
+                                               ▼
+                                        Claude Code fixes the real repo source
+```
+
+See **[AI-Assisted Error Fixing](#ai-assisted-error-fixing-mcp)** below for setup.
 
 ## Quick Start
 
@@ -111,7 +145,7 @@ Four packages sharing a typed protocol via `@remotr/shared`:
 
 ```bash
 npm install
-npm run build        # Builds shared → sdk → debugger → server
+npm run build        # Builds shared → sourcemap → sdk → debugger → server → mcp
 ```
 
 ### 2. Start Server
@@ -240,7 +274,9 @@ Dashboard will show:
 ```bash
 npm run dev:debugger   # Panel hot reload (Vite dev server, /ws and /api proxy to :9777)
 npm run build:sdk      # Rebuild SDK only
-npm test -w @remotr/server   # WS relay smoke test
+npm test -w @remotr/server      # WS relay smoke test
+npm test -w @remotr/sourcemap   # Source-map resolver unit tests
+node packages/mcp/test/integration.mjs   # MCP end-to-end (server + fake SDK + resolution)
 ```
 
 `examples/demo.html` is a built-in test page covering various collection scenarios.
@@ -252,6 +288,47 @@ npm test -w @remotr/server   # WS relay smoke test
 3. **Relay**: Server routes SDK ↔ panel by `room`; maintains backlog (trimmed at rrweb Meta events) so late-joining panels can rebuild current state
 4. **Reconstruction**: Panel uses rrweb `Replayer` in live mode to replay event stream; other panels render from corresponding events
 5. **Multi-Session Routing**: SDK sends `deviceId`, `pageId`, `identity` in connection params. Server maintains per-session backlog and routes messages based on session ID. Dashboard receives updates for all sessions; session debugger only receives messages from its target session.
+6. **Source Maps & AI Fixing**: On demand, the panel/MCP sends a `sources.fetch` command; the SDK fetches the script and its `.map` same-origin (bypassing the panel's cross-origin restriction) and returns them. `@remotr/sourcemap` resolves minified stack frames to original `file:line:col` + code snippets. The MCP server packages this with console/network context for Claude Code to fix the real source.
+
+## AI-Assisted Error Fixing (MCP)
+
+Remotr ships an MCP server (`@remotr/mcp`) that lets **Claude Code** read live runtime errors from a session, resolve their stacks back to your original source via source maps, and gather console/network context — then fix the error in your real repo.
+
+### Setup
+
+Add the MCP server to your project's `.mcp.json` (or Claude Code MCP config):
+
+```json
+{
+  "mcpServers": {
+    "remotr": {
+      "command": "node",
+      "args": ["<remotr-repo>/packages/mcp/dist/cli.js", "--server", "http://localhost:9777", "--room", "default"]
+    }
+  }
+}
+```
+
+`--server` is the Remotr server URL, `--room` the room to inspect (env `REMOTR_SERVER` / `REMOTR_ROOM` also work).
+
+### Tools exposed
+
+| Tool | Purpose |
+|------|---------|
+| `remotr_list_sessions` | List live sessions (deviceId, pageId, url, framework, identity). Call first to find a target. |
+| `remotr_get_errors` | Recent errors for a session (uncaught errors, unhandled rejections, console.error) with raw stacks. |
+| `remotr_resolve_error` | Resolve one error's stack to original `file:line` + code snippet per frame via source maps. |
+| `remotr_get_context` | Full diagnostic bundle: system info, the error, resolved frames + snippets, recent console timeline, failed network requests. |
+
+A session is identified by the **(deviceId, pageId) pair** — `pageId` is derived deterministically from the URL, `deviceId` distinguishes browsers/devices.
+
+### The fast path: "Copy for AI fix"
+
+In the session view toolbar, click **🤖 Copy for AI fix**. It copies a ready-to-paste prompt — the server/room/deviceId/pageId/url plus instructions — into your clipboard. Paste it into Claude Code and it will activate the MCP, pull the resolved error and context, and propose a fix against your repo. The clipboard text also includes the `.mcp.json` snippet in case the MCP isn't configured yet.
+
+### Without source maps
+
+If a script ships no source map (or it's `hidden-source-map` / cross-origin / behind CORS), resolution **degrades gracefully**: tools still return the error message, minified location, console timeline, failed requests, and page context. Claude can often still locate the fix from the message + symbols + context — just less precisely than with a map. To get precise mapping, serve `.map` files same-origin with the `//# sourceMappingURL=` comment intact (dev/staging builds usually already do).
 
 ## Security Notice
 

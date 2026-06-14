@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeFrame } from '@remotr/shared';
 import type {
   MethodData,
@@ -12,10 +12,14 @@ import LanguageToggle from '../components/LanguageToggle';
 import ReplayPlayer from '../panels/ReplayPlayer';
 import { ConsoleRow } from '../panels/ConsolePanel';
 import { DetailPanel, statusColor, urlName, formatMs } from '../panels/NetworkPanel';
+import { parseDevice } from '../ua';
 import { useT, type MessageKey } from '../i18n';
 
 interface ReplayViewProps {
   room: string;
+  /** 从 Session 页跳转时携带：自动定位到该 session 并选中最新一段 */
+  initialDeviceId?: string;
+  initialPageId?: string;
   onBack: () => void;
 }
 
@@ -98,13 +102,19 @@ function fmtClock(ts: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+/** 会话最近一次活动时间（最新段的 endTs），用于会话列表倒序排序。 */
+function latestActivityTs(s: RecordingSessionInfo): number {
+  const last = s.segments[s.segments.length - 1];
+  return last ? last.endTs : 0;
+}
+
 function fmtBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export default function ReplayView({ room, onBack }: ReplayViewProps): React.ReactElement {
+export default function ReplayView({ room, initialDeviceId, initialPageId, onBack }: ReplayViewProps): React.ReactElement {
   const t = useT();
   const [list, setList] = useState<RecordingListResponse | null>(null);
   const [loadingList, setLoadingList] = useState(true);
@@ -113,26 +123,54 @@ export default function ReplayView({ room, onBack }: ReplayViewProps): React.Rea
   const [segment, setSegment] = useState<ParsedSegment | null>(null);
   const [loadingSeg, setLoadingSeg] = useState(false);
   const [dataTab, setDataTab] = useState<'console' | 'network'>('console');
+  // 从 Session 页进入时默认只看当前 session；可点"显示全部"解除
+  const [onlyInitial, setOnlyInitial] = useState<boolean>(!!(initialDeviceId && initialPageId));
 
-  // 拉取当天录制列表
+  // 拉取当天录制列表。showLoading 仅初次加载为 true；手动/自动刷新静默更新，
+  // 不闪烁 loading、不打扰当前选中与播放。
+  const listAbortRef = useRef(false);
+  const initialLocateDone = useRef(false);
+
+  const refreshList = useCallback(
+    (showLoading: boolean) => {
+      if (showLoading) setLoadingList(true);
+      fetch(`/api/rooms/${encodeURIComponent(room)}/recordings`)
+        .then((r) => r.json())
+        .then((data: RecordingListResponse) => {
+          if (listAbortRef.current) return;
+          setList(data);
+          // 从 Session 页跳转而来：仅首次定位该 session 并选中最新一段
+          if (!initialLocateDone.current && initialDeviceId && initialPageId) {
+            initialLocateDone.current = true;
+            const target = data.sessions.find(
+              (s) => s.session.deviceId === initialDeviceId && s.session.pageId === initialPageId,
+            );
+            const latest = target?.segments[target.segments.length - 1];
+            if (target && latest) {
+              setSelectedDir(target.dir);
+              setSelectedFile(latest.file);
+            }
+          }
+        })
+        .catch(() => {
+          if (!listAbortRef.current && showLoading) setList(null);
+        })
+        .finally(() => {
+          if (!listAbortRef.current && showLoading) setLoadingList(false);
+        });
+    },
+    [room, initialDeviceId, initialPageId],
+  );
+
   useEffect(() => {
-    let cancelled = false;
-    setLoadingList(true);
-    fetch(`/api/rooms/${encodeURIComponent(room)}/recordings`)
-      .then((r) => r.json())
-      .then((data: RecordingListResponse) => {
-        if (!cancelled) setList(data);
-      })
-      .catch(() => {
-        if (!cancelled) setList(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingList(false);
-      });
+    listAbortRef.current = false;
+    refreshList(true);
+    const timer = setInterval(() => refreshList(false), 10_000);
     return () => {
-      cancelled = true;
+      listAbortRef.current = true;
+      clearInterval(timer);
     };
-  }, [room]);
+  }, [refreshList]);
 
   // 拉取并解析选中的段
   useEffect(() => {
@@ -204,6 +242,9 @@ export default function ReplayView({ room, onBack }: ReplayViewProps): React.Rea
         >
           <div
             style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
               padding: '6px 10px',
               fontSize: 11,
               color: 'var(--text-secondary)',
@@ -213,7 +254,10 @@ export default function ReplayView({ room, onBack }: ReplayViewProps): React.Rea
               background: 'var(--bg-secondary)',
             }}
           >
-            {t('replay.sessions')}
+            <span>{t('replay.sessions')}</span>
+            <button onClick={() => refreshList(false)} title={t('common.refresh')} style={{ fontSize: 11 }}>
+              ⟳
+            </button>
           </div>
 
           {loadingList && <div style={{ padding: 12, color: 'var(--text-muted)', fontSize: 12 }}>{t('replay.loading')}</div>}
@@ -226,15 +270,43 @@ export default function ReplayView({ room, onBack }: ReplayViewProps): React.Rea
             <div style={{ padding: 12, color: 'var(--text-muted)', fontSize: 12 }}>{t('replay.noRecordings')}</div>
           )}
 
-          {list?.sessions.map((s) => (
-            <SessionItem
-              key={s.dir}
-              session={s}
-              selectedFile={selectedDir === s.dir ? selectedFile : null}
-              onSelectSegment={(file) => selectSegment(s.dir, file)}
-              t={t}
-            />
-          ))}
+          {list?.sessions
+            .filter(
+              (s) =>
+                !onlyInitial ||
+                (s.session.deviceId === initialDeviceId && s.session.pageId === initialPageId),
+            )
+            .slice()
+            // 倒序：最近有活动的会话排最前（segments 按 startTs 升序，末位即最新）
+            .sort((a, b) => latestActivityTs(b) - latestActivityTs(a))
+            .map((s) => (
+              <SessionItem
+                key={s.dir}
+                session={s}
+                selectedFile={selectedDir === s.dir ? selectedFile : null}
+                onSelectSegment={(file) => selectSegment(s.dir, file)}
+                t={t}
+              />
+            ))}
+
+          {onlyInitial && (
+            <button
+              onClick={() => setOnlyInitial(false)}
+              style={{
+                display: 'block',
+                width: '100%',
+                border: 'none',
+                background: 'transparent',
+                color: 'var(--accent-blue)',
+                padding: '8px 10px',
+                cursor: 'pointer',
+                fontSize: 11,
+                textAlign: 'center',
+              }}
+            >
+              {t('replay.showAll')}
+            </button>
+          )}
         </div>
 
         {/* 主区：回放 + 数据标签 */}
@@ -325,6 +397,7 @@ function SessionItem({
 }): React.ReactElement {
   const [open, setOpen] = useState(true);
   const label = session.title || session.url || `${session.session.deviceId.slice(0, 8)}…`;
+  const device = parseDevice(session.ua);
 
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
@@ -347,13 +420,19 @@ function SessionItem({
           <span style={{ color: 'var(--text-muted)' }}>{open ? '▾' : '▸'}</span>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
         </div>
+        {device && (
+          <div style={{ color: 'var(--accent-blue)', fontSize: 10, marginLeft: 18 }} title={session.ua}>
+            📱 {device}
+          </div>
+        )}
         <div style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: 18 }}>
           {session.identity || t('replay.anonymous')} · {t('replay.segmentCount', { count: session.segments.length })}
         </div>
       </button>
 
       {open &&
-        session.segments.map((seg: RecordingSegmentInfo) => {
+        // 倒序展示：最新的段在最上面，便于快速回看刚发生的内容
+        [...session.segments].reverse().map((seg: RecordingSegmentInfo) => {
           const active = selectedFile === seg.file;
           return (
             <button

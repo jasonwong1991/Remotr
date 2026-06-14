@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import type { ConsoleRecord } from '../store';
 import { SpyAtomView } from '../components/SpyAtomView';
 import { sendEval } from '../ws';
+import { resolveStack, type ResolvedFrame } from '../sources';
 import { useT } from '../i18n';
 
 type LevelFilter = 'all' | 'log' | 'info' | 'warn' | 'error' | 'debug';
@@ -26,6 +27,21 @@ const LEVEL_BG: Record<string, string> = {
 export function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactElement {
   const t = useT();
   const [stackOpen, setStackOpen] = useState(false);
+  const requestSourceView = useStore((s) => s.requestSourceView);
+  const [resolved, setResolved] = useState<ResolvedFrame[] | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  const handleResolve = useCallback(async () => {
+    const stack = record.pageError?.stack;
+    if (!stack || resolving) return;
+    setResolving(true);
+    try {
+      setResolved(await resolveStack(stack));
+    } finally {
+      setResolving(false);
+    }
+  }, [record.pageError?.stack, resolving]);
+
   const color = LEVEL_COLORS[record.level] ?? 'var(--text-primary)';
   const bg = LEVEL_BG[record.level] ?? 'transparent';
 
@@ -68,6 +84,11 @@ export function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactEl
                   {t('console.stack')} {stackOpen ? '▲' : '▼'}
                 </button>
               )}
+              {record.pageError.stack && (
+                <button onClick={handleResolve} disabled={resolving} style={{ marginLeft: 4, fontSize: 10 }}>
+                  {resolving ? t('sources.resolving') : t('sources.resolve')}
+                </button>
+              )}
             </span>
           )}
           {record.type === 'eval-result' && record.evalResult && (
@@ -92,6 +113,37 @@ export function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactEl
         }}>
           {(record.type === 'console' ? record.entry?.stack : record.pageError?.stack) ?? ''}
         </pre>
+      )}
+      {resolved && (
+        <div style={{ marginTop: 4, marginLeft: 34, fontSize: 10, fontFamily: 'var(--font-mono)' }}>
+          {resolved.length === 0 && (
+            <span style={{ color: 'var(--text-muted)' }}>{t('sources.noFrames')}</span>
+          )}
+          {resolved.map((f, i) =>
+            f.original ? (
+              <div
+                key={i}
+                onClick={() =>
+                  requestSourceView({
+                    scriptUrl: f.raw.url,
+                    source: f.original!.source,
+                    line: f.original!.line,
+                  })
+                }
+                style={{ color: 'var(--accent-blue)', cursor: 'pointer' }}
+                title={t('sources.jumpTitle')}
+              >
+                {f.raw.fn ? `${f.raw.fn} ` : ''}
+                {f.original.source}:{f.original.line}
+              </div>
+            ) : (
+              <div key={i} style={{ color: 'var(--text-muted)' }}>
+                {f.raw.fn ? `${f.raw.fn} ` : ''}
+                {f.raw.url}:{f.raw.line}:{f.raw.col}
+              </div>
+            ),
+          )}
+        </div>
       )}
     </div>
   );

@@ -81,7 +81,26 @@ async function main() {
   assert(lines2.some((f) => f.envelope.method === 'dom.rrweb' && f.envelope.data.event.type === 2), '段2: 基线含上一个 FullSnapshot');
   assert(lines2.some((f) => f.envelope.data?.value === 'seg2-log' || (f.envelope.method === 'console.entry')), '段2: 含段内实时 console');
 
-  // 4) 路径穿越防护
+  // 4) 基线时间重定位：段2 的 rrweb 时间跨度应为真实活动时长（毫秒级），
+  //    而非把基线之前 ~1.2s 的空闲间隔算进去（幻影时长）
+  const rrTs2 = lines2.filter((f) => f.envelope.method === 'dom.rrweb').map((f) => f.envelope.data.event.timestamp);
+  const span2 = Math.max(...rrTs2) - Math.min(...rrTs2);
+  assert(span2 < 100, `段2: 基线时间已重定位（rrweb 跨度 ${span2}ms < 100ms，未含空闲间隔）`);
+
+  // 5) 空闲门控：超过段时长后，非 rrweb 帧不触发轮转（不再产出 0 秒垃圾段）
+  await wait(1100);
+  sdk.send(sdkFrame('console.entry', { level: 'log', args: [{ type: 'string', value: 'idle-log', display: '"idle-log"' }] }));
+  await wait(300);
+  let list2 = await fetch(`http://127.0.0.1:${PORT}/api/rooms/${room}/recordings`).then((r) => r.json());
+  assert(list2.sessions[0].segments.length === 2, `空闲门控: 超时后 console 不轮转（仍 2 段，实际 ${list2.sessions[0].segments.length}）`);
+
+  // 6) rrweb 活动到来才轮转 → 第 3 段
+  sdk.send(sdkFrame('dom.rrweb', { event: INCR(Date.now()) }));
+  await wait(300);
+  list2 = await fetch(`http://127.0.0.1:${PORT}/api/rooms/${room}/recordings`).then((r) => r.json());
+  assert(list2.sessions[0].segments.length === 3, `活动门控: rrweb 到来触发轮转（3 段，实际 ${list2.sessions[0].segments.length}）`);
+
+  // 7) 路径穿越防护
   const trav = await fetch(`http://127.0.0.1:${PORT}/api/rooms/${room}/recordings/${sess.dir}/..%2f..%2fmeta.json`);
   assert(trav.status === 400 || trav.status === 404, '安全: 拒绝目录穿越路径');
 
