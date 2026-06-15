@@ -334,6 +334,14 @@ If a script ships no source map (or it's `hidden-source-map` / cross-origin / be
 
 Remotr collects page data and supports remote JS execution. **Use only in development/debugging environments.** Do not permanently inject in production pages to avoid sensitive data leakage and XSS risks.
 
+## Contributing
+
+Contributions are welcome! Please read our [Contributing Guide](./CONTRIBUTING.md) before submitting issues or pull requests.
+
+- 🐛 [Report a bug](https://github.com/jasonwong1991/Remotr/issues/new?template=bug_report.md)
+- 💡 [Request a feature](https://github.com/jasonwong1991/Remotr/issues/new?template=feature_request.md)
+- 🔧 [Submit a pull request](https://github.com/jasonwong1991/Remotr/compare)
+
 ## License
 
 MIT

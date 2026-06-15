@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 提问与讨论 / Questions & Discussions
+    url: https://github.com/jasonwong1991/Remotr/discussions
+    about: 如果有使用问题、功能讨论，请使用 Discussions。For usage questions and feature discussions, please use Discussions.
+  - name: 📖 阅读文档 / Read Documentation
+    url: https://github.com/jasonwong1991/Remotr#readme
+    about: 查看 README 了解功能和使用方法。Check README for features and usage guide.

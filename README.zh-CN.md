@@ -335,6 +335,14 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 
 Remotr 会采集页面数据并支持远程执行 JS。**仅在开发/调试环境中使用。** 请勿在生产页面永久注入，以避免敏感数据泄漏和 XSS 风险。
 
+## 参与贡献
+
+欢迎贡献！提交 issue 或 PR 前请阅读我们的[贡献指南](./CONTRIBUTING.md)。
+
+- 🐛 [报告 bug](https://github.com/jasonwong1991/Remotr/issues/new?template=bug_report_zh.md)
+- 💡 [请求功能](https://github.com/jasonwong1991/Remotr/issues/new?template=feature_request_zh.md)
+- 🔧 [提交 pull request](https://github.com/jasonwong1991/Remotr/compare)
+
 ## 许可证
 
 MIT
