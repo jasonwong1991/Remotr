@@ -5,9 +5,11 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 COPY packages/shared/package*.json ./packages/shared/
+COPY packages/sourcemap/package*.json ./packages/sourcemap/
 COPY packages/sdk/package*.json ./packages/sdk/
 COPY packages/server/package*.json ./packages/server/
 COPY packages/debugger/package*.json ./packages/debugger/
+COPY packages/mcp/package*.json ./packages/mcp/
 
 # Install dependencies
 RUN npm install
@@ -26,18 +28,22 @@ WORKDIR /app
 # Copy package files for production install
 COPY package*.json ./
 COPY packages/shared/package*.json ./packages/shared/
+COPY packages/sourcemap/package*.json ./packages/sourcemap/
 COPY packages/sdk/package*.json ./packages/sdk/
 COPY packages/server/package*.json ./packages/server/
 COPY packages/debugger/package*.json ./packages/debugger/
+COPY packages/mcp/package*.json ./packages/mcp/
 
 # Install production dependencies only
 RUN npm install --production
 
 # Copy built files from builder
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/sourcemap/dist ./packages/sourcemap/dist
 COPY --from=builder /app/packages/sdk/dist ./packages/sdk/dist
 COPY --from=builder /app/packages/server/dist ./packages/server/dist
 COPY --from=builder /app/packages/debugger/dist ./packages/debugger/dist
+COPY --from=builder /app/packages/mcp/dist ./packages/mcp/dist
 
 # Copy static files
 COPY packages/debugger/index.html ./packages/debugger/
