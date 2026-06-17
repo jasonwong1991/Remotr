@@ -140,6 +140,57 @@ function rewriteForcedSelector(selector: string, forced: string[]): string {
   return out;
 }
 
+/** Same-origin → 'same-origin'（带 Cookie），跨域 → 'omit'（避免 CORS preflight 拒绝） */
+function credentialsFor(url: string): RequestCredentials {
+  try {
+    const u = new URL(url, location.href);
+    return u.origin === location.origin ? 'same-origin' : 'omit';
+  } catch {
+    return 'same-origin';
+  }
+}
+
+/**
+ * 跨域 stylesheet 即便 CDN 返回了 ACAO，缺少 `<link crossorigin>` 属性时
+ * 浏览器仍拒绝暴露 cssRules（CSS 安全模型 vs fetch CORS 是两套规则）。
+ * 这里用 SDK 同源 fetch 拿到 CSS 文本，再用 Constructable Stylesheet
+ * 重建—手工构造的 sheet 没有 CORS 限制，cssRules 可读。按 href 缓存。
+ */
+const _parsedSheetCache = new Map<string, CSSRuleList | null>();
+
+async function accessibleRules(sheet: CSSStyleSheet): Promise<CSSRuleList | null> {
+  try {
+    return sheet.cssRules;
+  } catch {
+    /* CORS — 回退到 fetch + Constructable Stylesheet 重建 */
+  }
+
+  const href = sheet.href;
+  if (!href) return null;
+  if (_parsedSheetCache.has(href)) return _parsedSheetCache.get(href) ?? null;
+  if (typeof CSSStyleSheet === 'undefined' || typeof (CSSStyleSheet.prototype as { replaceSync?: unknown }).replaceSync !== 'function') {
+    return null;
+  }
+
+  try {
+    const res = await fetch(href, { credentials: credentialsFor(href) });
+    if (!res.ok) {
+      _parsedSheetCache.set(href, null);
+      return null;
+    }
+    const text = await res.text();
+    const parsed = new CSSStyleSheet();
+    parsed.replaceSync(text);
+    const rules = parsed.cssRules;
+    _parsedSheetCache.set(href, rules);
+    return rules;
+  } catch (err) {
+    console.warn('[remotr] Failed to fetch+parse cross-origin stylesheet:', href, err);
+    _parsedSheetCache.set(href, null);
+    return null;
+  }
+}
+
 /**
  * Walk a CSSRuleList and, for every style rule that references a forced
  * pseudo-class and (after rewriting) targets a currently-marked element, push
@@ -190,7 +241,7 @@ export function installElements(transport: Transport): void {
   let forcedStyleEl: HTMLStyleElement | null = null;
 
   /** Rebuild the injected stylesheet from every node's current forced states. */
-  function rebuildForcedStylesheet(): void {
+  async function rebuildForcedStylesheet(): Promise<void> {
     const union = new Set<string>();
     for (const set of forcedByNode.values()) {
       for (const pseudo of set) union.add(pseudo);
@@ -211,12 +262,7 @@ export function installElements(transport: Transport): void {
     const out: string[] = [];
     for (const sheet of Array.from(document.styleSheets)) {
       if (sheet.ownerNode === forcedStyleEl) continue; // never rewrite our own sheet
-      let rules: CSSRuleList;
-      try {
-        rules = sheet.cssRules;
-      } catch {
-        continue; // CORS-restricted cross-origin sheet
-      }
+      const rules = await accessibleRules(sheet);
       if (rules) collectForcedRules(rules, forced, out, '', '');
     }
     forcedStyleEl.textContent = out.join('\n');
@@ -390,7 +436,9 @@ export function installElements(transport: Transport): void {
       forcedByNode.delete(cmd.nodeId);
     }
 
-    rebuildForcedStylesheet();
+    // rebuildForcedStylesheet 现在是 async（跨域 fetch 重建样式表）；
+    // 标记类已同步应用，注入样式表就绪即可，主流程不阻塞。
+    void rebuildForcedStylesheet();
     return { ok: true };
   });
 
@@ -516,7 +564,7 @@ export function installElements(transport: Transport): void {
   });
 
   // 处理获取匹配 CSS 规则命令
-  transport.onCommand('elements.getMatchedRules', (data): ElementsGetMatchedRulesResult => {
+  transport.onCommand('elements.getMatchedRules', async (data): Promise<ElementsGetMatchedRulesResult> => {
     const cmd = data as ElementsGetMatchedRulesCmd;
     const element = registry.resolve(cmd.nodeId);
 
@@ -549,16 +597,10 @@ export function installElements(transport: Transport): void {
       const sheet = sheets[sheetIndex];
       // Skip our own forced-state sheet — its rewritten rules aren't real matches.
       if (forcedStyleEl && sheet.ownerNode === forcedStyleEl) continue;
-      let rules: CSSRuleList;
 
-      try {
-        rules = sheet.cssRules;
-      } catch {
-        // CORS 限制：跳过无法访问的跨域样式表
-        console.warn(`[remotr] Cannot access cssRules for stylesheet at index ${sheetIndex} (CORS restriction)`);
-        continue;
-      }
-
+      // 跨域样式表 cssRules 直接读会被拒（即便 CDN 配了 ACAO，也需要 <link crossorigin>）；
+      // accessibleRules 会回退到 SDK 同源 fetch + Constructable Stylesheet 重建。
+      const rules = await accessibleRules(sheet);
       if (!rules) continue;
 
       const source = sheet.href ?? '<style>';
