@@ -140,16 +140,6 @@ function rewriteForcedSelector(selector: string, forced: string[]): string {
   return out;
 }
 
-/** Same-origin → 'same-origin'（带 Cookie），跨域 → 'omit'（避免 CORS preflight 拒绝） */
-function credentialsFor(url: string): RequestCredentials {
-  try {
-    const u = new URL(url, location.href);
-    return u.origin === location.origin ? 'same-origin' : 'omit';
-  } catch {
-    return 'same-origin';
-  }
-}
-
 /**
  * 跨域 stylesheet 即便 CDN 返回了 ACAO，缺少 `<link crossorigin>` 属性时
  * 浏览器仍拒绝暴露 cssRules（CSS 安全模型 vs fetch CORS 是两套规则）。
@@ -173,7 +163,8 @@ async function accessibleRules(sheet: CSSStyleSheet): Promise<CSSRuleList | null
   }
 
   try {
-    const res = await fetch(href, { credentials: credentialsFor(href) });
+    // 静态 CSS 不需要 Cookie，一律 omit：避免 CORS 规范下"带凭据 + ACAO:* 被拒"。
+    const res = await fetch(href, { credentials: 'omit' });
     if (!res.ok) {
       _parsedSheetCache.set(href, null);
       return null;

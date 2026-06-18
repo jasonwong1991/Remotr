@@ -41,23 +41,12 @@ function listScripts(): ScriptInfo[] {
   return Array.from(urls, (url) => ({ url }));
 }
 
-/**
- * 判断 URL 是否与当前页面同源（同源才需要带 Cookie）。
- * 跨域 CDN 资源用 credentials:'omit' 避免 CORS 预检被拒。
- */
-function credentialsFor(url: string): RequestCredentials {
-  try {
-    const u = new URL(url, location.href);
-    return u.origin === location.origin ? 'same-origin' : 'omit';
-  } catch {
-    return 'same-origin';
-  }
-}
-
 /** 同源代取脚本文本，并尽力取出其 source map（外链或内联 base64 均归一为 map 字符串） */
 async function fetchSource(url: string): Promise<SourcesFetchResult> {
   try {
-    const res = await fetch(url, { credentials: credentialsFor(url) });
+    // 静态资源（js/map）不需要 Cookie，一律 omit：避免 CORS 规范下
+    // "带凭据 + ACAO:* 被拒"（TypeError: Load failed）。
+    const res = await fetch(url, { credentials: 'omit' });
     if (!res.ok) return { url, content: '', error: `HTTP ${res.status}` };
 
     let content = await res.text();
@@ -79,7 +68,7 @@ async function fetchSource(url: string): Promise<SourcesFetchResult> {
         try {
           const abs = new URL(smURL, url).href;
           sourceMappingURL = abs;
-          const mapRes = await fetch(abs, { credentials: credentialsFor(abs) });
+          const mapRes = await fetch(abs, { credentials: 'omit' });
           if (mapRes.ok) {
             const mapText = await mapRes.text();
             if (mapText.length > MAX_BYTES) truncated = true;
