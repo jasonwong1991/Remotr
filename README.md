@@ -17,7 +17,7 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 - 🤖 **AI-Assisted Fixing (MCP)** — A built-in MCP server exposes live errors, source-map-resolved stacks, and console/network context to **Claude Code**. One "Copy for AI fix" button in the session view hands Claude everything it needs to locate and fix the error in your real repo. Graceful degradation: works without source maps too (resolves to minified position + full context).
 - 🔌 **Zero-config Injection** — One `<script>` tag, auto-connects with exponential backoff reconnection
 - 📦 **Single-file SDK** — Built as a single IIFE with esbuild (~60KB gzipped, includes rrweb), no dependencies needed on target page
-- 🔀 **Multi-Device/Multi-Page** — Each device and browser tab is tracked separately with persistent device IDs (localStorage) and ephemeral page IDs (sessionStorage). Perfect for debugging multiple users or testing across devices.
+- 🔀 **Multi-Device/Multi-Page** — Each device and browser tab is tracked separately with persistent device IDs (localStorage) and deterministic page IDs (URL fingerprint + concurrent-tab slots, so reopening the same page resumes the same session). Perfect for debugging multiple users or testing across devices.
 - 👥 **Identity Grouping** — Use `data-identity-cookie` to group sessions by user (e.g., alice, bob). Dashboard automatically groups by identity or device for easy navigation.
 - 📊 **Dashboard UI** — Visual overview of all connected sessions at `/#/dashboard`. See real-time status, click any session to debug it.
 - 🌍 **i18n** — Built-in English / 简体中文 toggle (defaults to English)
@@ -173,15 +173,20 @@ Add before `</body>` on the page you want to debug (replace host with your serve
 <script src="http://<your-IP>:9777/remotr.js" data-room="default"></script>
 ```
 
-`data-*` configuration options:
+`data-*` configuration options (auto-start mode):
 
-| Attribute | Description | Default |
-|-----------|-------------|---------|
-| `data-room` | Room ID (SDK and panel in same room communicate) | `default` |
-| `data-server` | Server address (auto-inferred from script src by default) | Script origin |
-| `data-mirror` | Enable page mirroring (`false` to disable and save bandwidth) | `true` |
-| `data-device-id` | Manual device ID (overrides auto-generated) | Auto (persistent in localStorage) |
-| `data-identity-cookie` | Cookie name to read identity from (for grouping in Dashboard) | - |
+| Attribute | Maps to | Description | Default |
+|-----------|---------|-------------|---------|
+| `data-room` | `room` | Room ID (SDK and panel in the same room communicate) | `default` |
+| `data-server` | `server` | Server address (auto-inferred from script `src` by default) | Script origin |
+| `data-mirror` | `mirror` | Enable page mirroring (`"false"` disables rrweb to save bandwidth) | `true` |
+| `data-device-id` | `deviceId` | Manual device ID (overrides auto-generated) | Auto (persisted in localStorage) |
+| `data-page-id` | `pageId` | Manual page ID (overrides URL-fingerprint default) | Auto (URL fingerprint) |
+| `data-identity` | `identity` | Static identity string (e.g. a username), takes precedence over the cookie | - |
+| `data-identity-cookie` | `identityCookie` | Cookie name to read the identity from (for grouping in Dashboard) | - |
+| `data-auto` | - | Force auto-start even when none of `data-room` / `data-server` is present | - |
+
+> Auto-start triggers when the inject script carries **any** of `data-room`, `data-server`, or `data-auto`. Otherwise call `REMOTR.start()` yourself.
 
 **Identity grouping example:**
 ```html
@@ -193,11 +198,35 @@ Add before `</body>` on the page you want to debug (replace host with your serve
 ></script>
 ```
 
-Or start manually in code:
+### `REMOTR.start(config?)` — manual API
+
+When you need to start the SDK from code (e.g. after async bootstrap, or to avoid auto-start), call `REMOTR.start()`. Every field is optional and mirrors a `data-*` attribute one-to-one:
 
 ```js
-REMOTR.start({ server: 'http://192.168.1.10:9777', room: 'my-app', mirror: true });
+REMOTR.start({
+  server: 'http://192.168.1.10:9777', // Server address; default: inferred from inject-script src, else current page origin
+  room: 'my-app',                     // Room ID; default: 'default'
+  mirror: true,                       // Enable rrweb page mirror; default: true
+  deviceId: 'dev_custom',             // Override device ID; default: persistent localStorage id (fingerprint fallback)
+  pageId: 'page_checkout',            // Override page ID; default: deterministic URL fingerprint + tab slot
+  identity: 'alice',                  // Static identity; default: undefined
+  identityCookie: 'username',         // Read identity from this cookie; default: undefined (ignored if `identity` set)
+});
 ```
+
+| Option | Type | Default | Notes |
+|--------|------|---------|-------|
+| `server` | `string` | inject-script origin → page origin | WebSocket/HTTP server base, e.g. `http://host:9777` |
+| `room` | `string` | `'default'` | SDK and debug panel must share a room |
+| `mirror` | `boolean` | `true` | `false` skips rrweb recording (no page mirror, lower bandwidth) |
+| `deviceId` | `string` | auto (localStorage, fingerprint fallback) | Stable per browser; identifies one device |
+| `pageId` | `string` | auto (URL fingerprint + tab slot) | Same URL reopened reuses the same session; concurrent tabs get `-2`, `-3`… |
+| `identity` | `string` | `undefined` | Human label for grouping; wins over `identityCookie` |
+| `identityCookie` | `string` | `undefined` | Cookie name to resolve identity from at start |
+
+`REMOTR.start()` is idempotent — calling it twice is a no-op after the first start. The SDK also exports `REMOTR.SDK_VERSION`.
+
+> **Note on `deviceId` across origins:** `deviceId` lives in `localStorage`, which is **per-origin**. The same physical machine visiting `https://a.example.com` and `https://b.example.com` will get **two different** `deviceId`s (and thus two Dashboard groups) — browsers isolate storage by origin, so the SDK cannot share it. To force one identity across origins, pass an explicit `deviceId` (or set `identity` / `data-identity-cookie`) so sessions group by person instead.
 
 ### 4. Open Debug Panel
 

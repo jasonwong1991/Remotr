@@ -154,3 +154,9 @@ td {
 tr:hover td {
   background: var(--bg-hover);
 }
+
+/* rrweb 在 PageMirror 容器内生成的回放 iframe：去掉浏览器默认的粗 inset 边框，
+   改用 1px 细边。rrweb 不暴露 iframe 样式配置，故在此全局覆盖。 */
+iframe {
+  border: 1px solid #ddd;
+}

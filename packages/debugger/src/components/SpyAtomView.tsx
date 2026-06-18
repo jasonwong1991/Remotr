@@ -22,7 +22,8 @@ function getColor(type: SpyAtom['type']): string {
 }
 
 export function SpyAtomView({ atom, depth = 0 }: Props): React.ReactElement {
-  const [expanded, setExpanded] = useState(depth < 1);
+  // 对象/数组默认收起，避免日志一打印就铺开一大片；点击展开。
+  const [expanded, setExpanded] = useState(false);
 
   const hasChildren = (atom.type === 'object' || atom.type === 'array' || atom.type === 'error') &&
     atom.children != null && atom.children.length > 0;

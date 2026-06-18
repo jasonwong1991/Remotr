@@ -17,7 +17,7 @@
 - 🤖 **AI 辅助修复（MCP）** — 内置 MCP 服务器把实时报错、Source Map 还原后的堆栈、console/network 上下文暴露给 **Claude Code**。会话视图里一个「复制给 AI 修复」按钮，把 Claude 定位并修复所需的一切交给它，直接改你真实仓库的源码。优雅降级：没有 Source Map 也能用（还原为压缩位置 + 完整上下文）。
 - 🔌 **零配置注入** — 一个 `<script>` 标签，自动连接，支持指数退避重连
 - 📦 **单文件 SDK** — 使用 esbuild 构建为单个 IIFE（gzip 后约 60KB，包含 rrweb），目标页面无需依赖
-- 🔀 **多设备/多页面** — 每个设备和浏览器标签页都单独跟踪，使用持久化的设备 ID（localStorage）和临时的页面 ID（sessionStorage）。非常适合调试多用户或跨设备测试。
+- 🔀 **多设备/多页面** — 每个设备和浏览器标签页都单独跟踪，使用持久化的设备 ID（localStorage）和确定性的页面 ID（URL 指纹 + 并发标签页 slot，重新打开同一页面即恢复同一 session）。非常适合调试多用户或跨设备测试。
 - 👥 **身份分组** — 使用 `data-identity-cookie` 按用户分组会话（如 alice、bob）。仪表盘自动按身份或设备分组，便于导航。
 - 📊 **仪表盘界面** — 在 `/#/dashboard` 查看所有连接会话的可视化概览。查看实时状态，点击任何会话进行调试。
 - 🌍 **国际化** — 内置中英文切换（默认英文）
@@ -174,15 +174,20 @@ node packages/server/dist/cli.js --port 9777 --host 0.0.0.0
 <script src="http://<your-IP>:9777/remotr.js" data-room="default"></script>
 ```
 
-`data-*` 配置选项：
+`data-*` 配置选项（自动启动模式）：
 
-| 属性 | 描述 | 默认值 |
-|------|------|--------|
-| `data-room` | 房间 ID（SDK 和面板在同一房间内通信） | `default` |
-| `data-server` | 服务器地址（默认从 script src 自动推断） | 脚本来源 |
-| `data-mirror` | 启用页面镜像（设为 `false` 可禁用以节省带宽） | `true` |
-| `data-device-id` | 手动设置设备 ID（覆盖自动生成） | 自动（localStorage 持久化） |
-| `data-identity-cookie` | 读取身份信息的 Cookie 名称（用于仪表盘分组） | - |
+| 属性 | 对应 API | 描述 | 默认值 |
+|------|----------|------|--------|
+| `data-room` | `room` | 房间 ID（SDK 和面板在同一房间内通信） | `default` |
+| `data-server` | `server` | 服务器地址（默认从 script `src` 自动推断） | 脚本来源 |
+| `data-mirror` | `mirror` | 启用页面镜像（设为 `"false"` 禁用 rrweb 以节省带宽） | `true` |
+| `data-device-id` | `deviceId` | 手动设置设备 ID（覆盖自动生成） | 自动（localStorage 持久化） |
+| `data-page-id` | `pageId` | 手动设置页面 ID（覆盖 URL 指纹默认值） | 自动（URL 指纹） |
+| `data-identity` | `identity` | 静态身份字符串（如用户名），优先级高于 cookie | - |
+| `data-identity-cookie` | `identityCookie` | 读取身份信息的 Cookie 名称（用于仪表盘分组） | - |
+| `data-auto` | - | 在没有 `data-room` / `data-server` 时强制自动启动 | - |
+
+> 当注入脚本带有 `data-room`、`data-server` 或 `data-auto` 中**任意一个**时触发自动启动；否则需自行调用 `REMOTR.start()`。
 
 **身份分组示例：**
 ```html
@@ -194,11 +199,35 @@ node packages/server/dist/cli.js --port 9777 --host 0.0.0.0
 ></script>
 ```
 
-或在代码中手动启动：
+### `REMOTR.start(config?)` — 手动 API
+
+需要在代码中启动 SDK 时（例如异步初始化之后，或为了避免自动启动），调用 `REMOTR.start()`。所有字段均为可选，且与 `data-*` 属性一一对应：
 
 ```js
-REMOTR.start({ server: 'http://192.168.1.10:9777', room: 'my-app', mirror: true });
+REMOTR.start({
+  server: 'http://192.168.1.10:9777', // 服务器地址；默认：从注入脚本 src 推断，再退回当前页面 origin
+  room: 'my-app',                     // 房间 ID；默认：'default'
+  mirror: true,                       // 启用 rrweb 页面镜像；默认：true
+  deviceId: 'dev_custom',             // 覆盖设备 ID；默认：localStorage 持久化 ID（不可用时退回指纹）
+  pageId: 'page_checkout',            // 覆盖页面 ID；默认：URL 指纹 + 标签页 slot 确定性生成
+  identity: 'alice',                  // 静态身份；默认：undefined
+  identityCookie: 'username',         // 从该 cookie 读取身份；默认：undefined（若已设 identity 则忽略）
+});
 ```
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `server` | `string` | 注入脚本来源 → 页面 origin | WebSocket/HTTP 服务器基址，如 `http://host:9777` |
+| `room` | `string` | `'default'` | SDK 与调试面板须在同一房间 |
+| `mirror` | `boolean` | `true` | `false` 跳过 rrweb 录制（无页面镜像，更省带宽） |
+| `deviceId` | `string` | 自动（localStorage，指纹兜底） | 每浏览器稳定；标识单台设备 |
+| `pageId` | `string` | 自动（URL 指纹 + 标签页 slot） | 同 URL 重新打开复用同一 session；并发标签页顺延 `-2`、`-3`… |
+| `identity` | `string` | `undefined` | 用于分组的人类可读标签；优先级高于 `identityCookie` |
+| `identityCookie` | `string` | `undefined` | 启动时从该 cookie 名解析身份 |
+
+`REMOTR.start()` 是幂等的——首次启动后再次调用不会重复执行。SDK 还导出 `REMOTR.SDK_VERSION`。
+
+> **关于跨域的 `deviceId`：** `deviceId` 存储在 `localStorage` 中，而 localStorage 是**按 origin 隔离**的。同一台物理机器访问 `https://a.example.com` 和 `https://b.example.com` 会得到**两个不同的** `deviceId`（因而在仪表盘里分成两组）——浏览器按 origin 隔离存储，SDK 无法跨域共享。若要跨域共用同一身份，请显式传入 `deviceId`（或设置 `identity` / `data-identity-cookie`），让会话按"人"而非按 origin 分组。
 
 ### 4. 打开调试面板
 
