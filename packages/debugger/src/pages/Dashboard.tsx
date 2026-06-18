@@ -73,7 +73,9 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
     if (groupBy === 'identity') {
       const map = new Map<string, Map<string, SessionSnapshot[]>>();
       for (const s of sessions) {
-        const id = s.identity || 'anonymous';
+        // identity 取不到时不再把不同设备并入同一个 'anonymous' 框——
+        // 不同设备代表不同的人，应以 deviceId 各自成顶层组。
+        const id = s.identity || s.session.deviceId;
         const dev = s.session.deviceId;
         if (!map.has(id)) map.set(id, new Map());
         const devMap = map.get(id)!;
@@ -253,7 +255,12 @@ function SessionGroups({
       {Array.from(groups.entries()).map(([topKey, subMap]) => {
         // device 分组时 topKey 是 deviceId → 解析成真实设备名（UA 取组内首个 session）
         const topUa = Array.from(subMap.values())[0]?.[0]?.systemInfo?.ua;
-        const topLabel = groupBy === 'device' ? deviceDisplay(topKey, topUa) : topKey;
+        // identity 分组下，匿名 session 回退用 deviceId 作顶层 key——此时该 key 恰好
+        // 等于其唯一子组的 deviceId，按设备名渲染并显示设备图标，而非 👤 + 原始 ID。
+        const isDeviceFallback = groupBy === 'identity' && subMap.size === 1 && subMap.has(topKey);
+        const topLabel =
+          groupBy === 'device' || isDeviceFallback ? deviceDisplay(topKey, topUa) : topKey;
+        const topIcon = groupBy === 'device' || isDeviceFallback ? '💻' : '👤';
         return (
         <div
           key={topKey}
@@ -276,7 +283,7 @@ function SessionGroups({
             }}
           >
             <span style={{ fontSize: 14 }}>
-              {groupBy === 'identity' ? '👤' : '💻'}
+              {topIcon}
             </span>
             <strong style={{ color: 'var(--text-primary)' }} title={topKey}>{topLabel}</strong>
             <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
@@ -286,21 +293,24 @@ function SessionGroups({
 
           {Array.from(subMap.entries()).map(([subKey, pages]) => (
             <div key={subKey} style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: 'var(--text-muted)',
-                  marginBottom: 8,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <span>{groupBy === 'identity' ? '💻' : '👤'}</span>
-                <code style={{ fontFamily: 'var(--font-mono)' }} title={subKey}>
-                  {groupBy === 'identity' ? deviceDisplay(subKey, pages[0]?.systemInfo?.ua) : subKey}
-                </code>
-              </div>
+              {/* 匿名回退组的顶层已是该设备名，子行会与之重复，故省略 */}
+              {!isDeviceFallback && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    marginBottom: 8,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <span>{groupBy === 'identity' ? '💻' : '👤'}</span>
+                  <code style={{ fontFamily: 'var(--font-mono)' }} title={subKey}>
+                    {groupBy === 'identity' ? deviceDisplay(subKey, pages[0]?.systemInfo?.ua) : subKey}
+                  </code>
+                </div>
+              )}
               <div
                 style={{
                   display: 'grid',
