@@ -18,6 +18,21 @@ export function parseDevice(ua: string | undefined): string | null {
   let m = /\((iPhone|iPad|iPod)[^)]*?OS (\d+(?:_\d+)*)/.exec(ua);
   if (m) return `${m[1]} · iOS ${m[2].replace(/_/g, '.')}`;
 
+  // 纯血鸿蒙（HarmonyOS NEXT / ArkWeb）："(Phone; OpenHarmony 5.0) … ArkWeb/…"
+  // 不含 Android；设备段是通用 Phone/Tablet（隐私保护，类似 iOS 不暴露型号）。
+  m = /OpenHarmony (\d+(?:\.\d+)*)/.exec(ua);
+  if (m) return `HarmonyOS ${m[1]}`;
+
+  // 兼容模式鸿蒙：华为 UA 在 Android 段后附带 "HarmonyOS X.Y" + AOSP 型号。
+  // 放在 Android 分支之前，使带 HarmonyOS 标识的设备归类为鸿蒙而非 Android。
+  m = /HarmonyOS ([\d.]+)/.exec(ua);
+  if (m) {
+    const ver = m[1];
+    const mm = /Android [\d.]+;\s*([^;)]+)/.exec(ua);
+    const model = mm ? mm[1].replace(/\s*Build\/.*$/, '').trim() : '';
+    return model ? `${model} · HarmonyOS ${ver}` : `HarmonyOS ${ver}`;
+  }
+
   // Android: "(Linux; Android 13; V2309A)" / "(Linux; Android 10; MI 8 Build/xxx; wv)"
   m = /Android ([\d.]+)/.exec(ua);
   if (m) {

@@ -31,6 +31,18 @@ describe('parseDevice', () => {
     expect(parseDevice(ua)).toBe('MI 4LTE · Android 4.4.4');
   });
 
+  it('纯血鸿蒙（HarmonyOS NEXT / OpenHarmony，无 Android 段）', () => {
+    const ua =
+      'Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1';
+    expect(parseDevice(ua)).toBe('HarmonyOS 5.0');
+  });
+
+  it('兼容模式鸿蒙（华为 UA 带 HarmonyOS + AOSP 型号）→ 归类鸿蒙而非 Android', () => {
+    const ua =
+      'Mozilla/5.0 (Linux; Android 12; ELS-AN00; HarmonyOS 4.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.88 Mobile Safari/537.36';
+    expect(parseDevice(ua)).toBe('ELS-AN00 · HarmonyOS 4.0.0');
+  });
+
   it('macOS', () => {
     const ua =
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
