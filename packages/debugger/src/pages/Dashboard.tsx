@@ -23,6 +23,12 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
   const [connStatus, setConnStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [groupBy, setGroupBy] = useState<GroupBy>('identity');
 
+  // 过滤状态
+  const [filterIdentities, setFilterIdentities] = useState<Set<string>>(new Set());
+  const [filterDevices, setFilterDevices] = useState<Set<string>>(new Set());
+  const [filterUrl, setFilterUrl] = useState('');
+  const [filterOnlineOnly, setFilterOnlineOnly] = useState(false);
+
   useEffect(() => {
     const { protocol, host } = window.location;
     const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
@@ -68,11 +74,40 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
     };
   }, [room]);
 
-  // 分组数据
+  // 应用过滤条件
+  const filteredSessions = useMemo(() => {
+    return sessions.filter((s) => {
+      // 在线状态过滤
+      if (filterOnlineOnly && !s.connected) return false;
+
+      // 身份过滤（空集 = 全选）
+      if (filterIdentities.size > 0) {
+        const id = s.identity || s.session.deviceId; // 匿名回退用 deviceId
+        if (!filterIdentities.has(id)) return false;
+      }
+
+      // 设备过滤
+      if (filterDevices.size > 0) {
+        if (!filterDevices.has(s.session.deviceId)) return false;
+      }
+
+      // URL/标题搜索（不区分大小写）
+      if (filterUrl.trim()) {
+        const needle = filterUrl.toLowerCase();
+        const url = s.systemInfo?.url?.toLowerCase() || '';
+        const title = s.systemInfo?.title?.toLowerCase() || '';
+        if (!url.includes(needle) && !title.includes(needle)) return false;
+      }
+
+      return true;
+    });
+  }, [sessions, filterIdentities, filterDevices, filterUrl, filterOnlineOnly]);
+
+  // 分组数据（基于过滤后的 sessions）
   const groups = useMemo(() => {
     if (groupBy === 'identity') {
       const map = new Map<string, Map<string, SessionSnapshot[]>>();
-      for (const s of sessions) {
+      for (const s of filteredSessions) {
         // identity 取不到时不再把不同设备并入同一个 'anonymous' 框——
         // 不同设备代表不同的人，应以 deviceId 各自成顶层组。
         const id = s.identity || s.session.deviceId;
@@ -85,7 +120,7 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
       return map;
     } else {
       const map = new Map<string, Map<string, SessionSnapshot[]>>();
-      for (const s of sessions) {
+      for (const s of filteredSessions) {
         const dev = s.session.deviceId;
         const id = s.identity || 'anonymous';
         if (!map.has(dev)) map.set(dev, new Map());
@@ -95,10 +130,24 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
       }
       return map;
     }
-  }, [sessions, groupBy]);
+  }, [filteredSessions, groupBy]);
 
-  const totalSessions = sessions.length;
-  const onlineSessions = sessions.filter((s) => s.connected).length;
+  const totalSessions = filteredSessions.length;
+  const onlineSessions = filteredSessions.filter((s) => s.connected).length;
+
+  // 提取所有唯一身份和设备（用于过滤器下拉）
+  const allIdentities = useMemo(() => {
+    const set = new Set<string>();
+    sessions.forEach((s) => set.add(s.identity || s.session.deviceId));
+    return Array.from(set).sort();
+  }, [sessions]);
+
+  const allDevices = useMemo(() => {
+    const set = new Set<string>();
+    sessions.forEach((s) => set.add(s.session.deviceId));
+    return Array.from(set).sort();
+  }, [sessions]);
+
   const t = useT();
 
   return (
@@ -193,9 +242,204 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
         </div>
       </div>
 
+      {/* 过滤栏 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '10px 20px',
+          background: 'var(--bg-tertiary)',
+          borderBottom: '1px solid var(--border)',
+          flexShrink: 0,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>
+          {t('dashboard.filter')}
+        </span>
+
+        {/* 身份多选 */}
+        <div style={{ position: 'relative' }}>
+          <select
+            multiple
+            value={Array.from(filterIdentities)}
+            onChange={(e) => {
+              const selected = Array.from(e.target.selectedOptions, (o) => o.value);
+              setFilterIdentities(new Set(selected));
+            }}
+            style={{
+              minWidth: 140,
+              maxWidth: 200,
+              height: 28,
+              fontSize: 11,
+              padding: '4px 8px',
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border)',
+              borderRadius: 3,
+              color: 'var(--text-primary)',
+            }}
+          >
+            <option value="" disabled style={{ color: 'var(--text-muted)' }}>
+              {filterIdentities.size === 0 ? t('dashboard.filterIdentityAll') : `${filterIdentities.size} ${t('dashboard.selected')}`}
+            </option>
+            {allIdentities.map((id) => (
+              <option key={id} value={id}>
+                {id.startsWith('dev_') ? `${id.slice(0, 10)}...` : id}
+              </option>
+            ))}
+          </select>
+          {filterIdentities.size > 0 && (
+            <button
+              onClick={() => setFilterIdentities(new Set())}
+              style={{
+                position: 'absolute',
+                right: 2,
+                top: 2,
+                width: 20,
+                height: 24,
+                background: 'var(--bg-secondary)',
+                border: 'none',
+                borderRadius: 2,
+                cursor: 'pointer',
+                fontSize: 10,
+                color: 'var(--text-muted)',
+              }}
+              title={t('dashboard.clearFilter')}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* 设备多选 */}
+        <div style={{ position: 'relative' }}>
+          <select
+            multiple
+            value={Array.from(filterDevices)}
+            onChange={(e) => {
+              const selected = Array.from(e.target.selectedOptions, (o) => o.value);
+              setFilterDevices(new Set(selected));
+            }}
+            style={{
+              minWidth: 140,
+              maxWidth: 200,
+              height: 28,
+              fontSize: 11,
+              padding: '4px 8px',
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border)',
+              borderRadius: 3,
+              color: 'var(--text-primary)',
+            }}
+          >
+            <option value="" disabled style={{ color: 'var(--text-muted)' }}>
+              {filterDevices.size === 0 ? t('dashboard.filterDeviceAll') : `${filterDevices.size} ${t('dashboard.selected')}`}
+            </option>
+            {allDevices.map((dev) => (
+              <option key={dev} value={dev}>
+                {dev.slice(0, 12)}...
+              </option>
+            ))}
+          </select>
+          {filterDevices.size > 0 && (
+            <button
+              onClick={() => setFilterDevices(new Set())}
+              style={{
+                position: 'absolute',
+                right: 2,
+                top: 2,
+                width: 20,
+                height: 24,
+                background: 'var(--bg-secondary)',
+                border: 'none',
+                borderRadius: 2,
+                cursor: 'pointer',
+                fontSize: 10,
+                color: 'var(--text-muted)',
+              }}
+              title={t('dashboard.clearFilter')}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* URL/标题搜索 */}
+        <input
+          type="text"
+          placeholder={t('dashboard.filterUrlPlaceholder')}
+          value={filterUrl}
+          onChange={(e) => setFilterUrl(e.target.value)}
+          style={{
+            flex: 1,
+            minWidth: 180,
+            maxWidth: 300,
+            height: 28,
+            fontSize: 11,
+            padding: '0 8px',
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border)',
+            borderRadius: 3,
+            color: 'var(--text-primary)',
+          }}
+        />
+
+        {/* 仅在线 */}
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 11,
+            color: 'var(--text-primary)',
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={filterOnlineOnly}
+            onChange={(e) => setFilterOnlineOnly(e.target.checked)}
+            style={{ cursor: 'pointer' }}
+          />
+          {t('dashboard.onlineOnly')}
+        </label>
+
+        {/* 清除所有过滤 */}
+        {(filterIdentities.size > 0 || filterDevices.size > 0 || filterUrl.trim() || filterOnlineOnly) && (
+          <button
+            onClick={() => {
+              setFilterIdentities(new Set());
+              setFilterDevices(new Set());
+              setFilterUrl('');
+              setFilterOnlineOnly(false);
+            }}
+            style={{
+              background: 'var(--log-warn-bg)',
+              color: 'var(--log-warn-fg)',
+              border: 'none',
+              padding: '4px 10px',
+              borderRadius: 3,
+              cursor: 'pointer',
+              fontSize: 11,
+              fontWeight: 500,
+            }}
+          >
+            {t('dashboard.clearAllFilters')}
+          </button>
+        )}
+      </div>
+
       {/* 主内容 */}
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-        {sessions.length === 0 ? (
+        {filteredSessions.length === 0 && sessions.length > 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.5 }}>🔍</div>
+            <h3 style={{ fontSize: 16, marginBottom: 8 }}>{t('dashboard.noMatchingSessions')}</h3>
+            <p style={{ fontSize: 12 }}>{t('dashboard.adjustFilters')}</p>
+          </div>
+        ) : sessions.length === 0 ? (
           <EmptyState room={room} connStatus={connStatus} />
         ) : (
           <SessionGroups groups={groups} groupBy={groupBy} room={room} />
