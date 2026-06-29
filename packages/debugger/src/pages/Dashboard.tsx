@@ -11,6 +11,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import LanguageToggle from '../components/LanguageToggle';
 import { parseDevice, deviceDisplay } from '../ua';
 import { useT, type MessageKey, type TFunc } from '../i18n';
+import MultiSelect from '../components/MultiSelect';
 
 type GroupBy = 'identity' | 'device';
 
@@ -260,110 +261,26 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
         </span>
 
         {/* 身份多选 */}
-        <div style={{ position: 'relative' }}>
-          <select
-            multiple
-            value={Array.from(filterIdentities)}
-            onChange={(e) => {
-              const selected = Array.from(e.target.selectedOptions, (o) => o.value);
-              setFilterIdentities(new Set(selected));
-            }}
-            style={{
-              minWidth: 140,
-              maxWidth: 200,
-              height: 28,
-              fontSize: 11,
-              padding: '4px 8px',
-              background: 'var(--bg-primary)',
-              border: '1px solid var(--border)',
-              borderRadius: 3,
-              color: 'var(--text-primary)',
-            }}
-          >
-            <option value="" disabled style={{ color: 'var(--text-muted)' }}>
-              {filterIdentities.size === 0 ? t('dashboard.filterIdentityAll') : `${filterIdentities.size} ${t('dashboard.selected')}`}
-            </option>
-            {allIdentities.map((id) => (
-              <option key={id} value={id}>
-                {id.startsWith('dev_') ? `${id.slice(0, 10)}...` : id}
-              </option>
-            ))}
-          </select>
-          {filterIdentities.size > 0 && (
-            <button
-              onClick={() => setFilterIdentities(new Set())}
-              style={{
-                position: 'absolute',
-                right: 2,
-                top: 2,
-                width: 20,
-                height: 24,
-                background: 'var(--bg-secondary)',
-                border: 'none',
-                borderRadius: 2,
-                cursor: 'pointer',
-                fontSize: 10,
-                color: 'var(--text-muted)',
-              }}
-              title={t('dashboard.clearFilter')}
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <MultiSelect
+          options={allIdentities}
+          selected={filterIdentities}
+          onChange={setFilterIdentities}
+          placeholder={t('dashboard.filterIdentityAll')}
+          selectedLabel={t('dashboard.selected')}
+          formatOption={(id) => (id.startsWith('dev_') ? `${id.slice(0, 10)}...` : id)}
+          minWidth={140}
+        />
 
         {/* 设备多选 */}
-        <div style={{ position: 'relative' }}>
-          <select
-            multiple
-            value={Array.from(filterDevices)}
-            onChange={(e) => {
-              const selected = Array.from(e.target.selectedOptions, (o) => o.value);
-              setFilterDevices(new Set(selected));
-            }}
-            style={{
-              minWidth: 140,
-              maxWidth: 200,
-              height: 28,
-              fontSize: 11,
-              padding: '4px 8px',
-              background: 'var(--bg-primary)',
-              border: '1px solid var(--border)',
-              borderRadius: 3,
-              color: 'var(--text-primary)',
-            }}
-          >
-            <option value="" disabled style={{ color: 'var(--text-muted)' }}>
-              {filterDevices.size === 0 ? t('dashboard.filterDeviceAll') : `${filterDevices.size} ${t('dashboard.selected')}`}
-            </option>
-            {allDevices.map((dev) => (
-              <option key={dev} value={dev}>
-                {dev.slice(0, 12)}...
-              </option>
-            ))}
-          </select>
-          {filterDevices.size > 0 && (
-            <button
-              onClick={() => setFilterDevices(new Set())}
-              style={{
-                position: 'absolute',
-                right: 2,
-                top: 2,
-                width: 20,
-                height: 24,
-                background: 'var(--bg-secondary)',
-                border: 'none',
-                borderRadius: 2,
-                cursor: 'pointer',
-                fontSize: 10,
-                color: 'var(--text-muted)',
-              }}
-              title={t('dashboard.clearFilter')}
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <MultiSelect
+          options={allDevices}
+          selected={filterDevices}
+          onChange={setFilterDevices}
+          placeholder={t('dashboard.filterDeviceAll')}
+          selectedLabel={t('dashboard.selected')}
+          formatOption={(dev) => `${dev.slice(0, 12)}...`}
+          minWidth={140}
+        />
 
         {/* URL/标题搜索 */}
         <input
