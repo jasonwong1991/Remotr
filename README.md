@@ -254,6 +254,34 @@ Click "← Dashboard" button in session view to return.
 
 Prefer containers? A multi-stage `Dockerfile` and `docker-compose.yml` are included — no local Node toolchain needed.
 
+### Using pre-built images (recommended)
+
+Pull the latest image from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/jasonwong1991/remotr:main
+docker run -d -p 9777:9777 --name remotr ghcr.io/jasonwong1991/remotr:main
+```
+
+Or use `docker-compose.yml` with the pre-built image:
+
+```yaml
+services:
+  remotr:
+    image: ghcr.io/jasonwong1991/remotr:main  # Use pre-built image
+    container_name: remotr
+    ports:
+      - "9777:9777"
+    # ... rest of config from docker-compose.yml
+```
+
+Available tags:
+- `main` — latest from the main branch
+- `v1.0.0`, `v1.0`, `v1` — semantic version tags (when released)
+- `main-abc1234` — commit SHA tags
+
+### Building locally
+
 ```bash
 docker compose up -d        # Build image and start (port 9777)
 docker compose logs -f      # Follow logs

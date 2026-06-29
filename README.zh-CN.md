@@ -255,6 +255,34 @@ http://<your-IP>:9777/#/session?room=default&deviceId=xxx&pageId=yyy
 
 偏好容器化？项目内置多阶段 `Dockerfile` 和 `docker-compose.yml`，无需本地 Node 工具链。
 
+### 使用预构建镜像（推荐）
+
+从 GitHub Container Registry 拉取最新镜像：
+
+```bash
+docker pull ghcr.io/jasonwong1991/remotr:main
+docker run -d -p 9777:9777 --name remotr ghcr.io/jasonwong1991/remotr:main
+```
+
+或在 `docker-compose.yml` 中使用预构建镜像：
+
+```yaml
+services:
+  remotr:
+    image: ghcr.io/jasonwong1991/remotr:main  # 使用预构建镜像
+    container_name: remotr
+    ports:
+      - "9777:9777"
+    # ... docker-compose.yml 中的其他配置
+```
+
+可用标签：
+- `main` — main 分支最新版
+- `v1.0.0`, `v1.0`, `v1` — 语义化版本标签（发布后可用）
+- `main-abc1234` — 提交 SHA 标签
+
+### 本地构建
+
 ```bash
 docker compose up -d        # 构建镜像并启动（端口 9777）
 docker compose logs -f      # 查看日志
