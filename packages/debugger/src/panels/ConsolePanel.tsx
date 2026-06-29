@@ -1,7 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
+import type { SpyAtom } from '@remotr/shared';
 import { useStore } from '../store';
 import type { ConsoleRecord } from '../store';
 import { SpyAtomView } from '../components/SpyAtomView';
+import { formatConsoleArgs } from '../components/formatC';
 import { sendEval } from '../ws';
 import { resolveStack, type ResolvedFrame } from '../sources';
 import { useT } from '../i18n';
@@ -23,6 +25,38 @@ const LEVEL_BG: Record<string, string> = {
   warn: 'var(--log-warn-bg)',
   info: 'var(--log-info-bg)',
 };
+
+/**
+ * 渲染 console.* 的参数列表：
+ * 首参含 %c/%s/%d 等格式说明符时按 DevTools 语义渲染（样式段 + 替换），
+ * 否则退回逐参数 SpyAtomView。
+ */
+function ConsoleArgs({ args }: { args: SpyAtom[] }): React.ReactElement {
+  const formatted = formatConsoleArgs(args);
+  if (!formatted) {
+    return (
+      <>
+        {args.map((atom, i) => (
+          <SpyAtomView key={i} atom={atom} />
+        ))}
+      </>
+    );
+  }
+  return (
+    <>
+      <span style={{ whiteSpace: 'pre-wrap' }}>
+        {formatted.segments.map((seg, i) => (
+          <span key={i} style={seg.style}>
+            {seg.text}
+          </span>
+        ))}
+      </span>
+      {formatted.rest.map((atom, i) => (
+        <SpyAtomView key={i} atom={atom} />
+      ))}
+    </>
+  );
+}
 
 export function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactElement {
   const t = useT();
@@ -58,9 +92,7 @@ export function ConsoleRow({ record }: { record: ConsoleRecord }): React.ReactEl
         <div style={{ flex: 1, color, fontFamily: 'var(--font-mono)', fontSize: 11, wordBreak: 'break-all' }}>
           {record.type === 'console' && record.entry && (
             <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-              {record.entry.args.map((atom, i) => (
-                <SpyAtomView key={i} atom={atom} />
-              ))}
+              <ConsoleArgs args={record.entry.args} />
               {record.entry.stack && (
                 <button onClick={() => setStackOpen((v) => !v)} style={{ marginLeft: 4, fontSize: 10 }}>
                   {t('console.stack')} {stackOpen ? '▲' : '▼'}
