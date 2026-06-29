@@ -199,7 +199,7 @@ export default function ReplayPlayer({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ flex: 1, overflow: 'auto', position: 'relative', background: 'var(--mirror-bg)' }}>
-        <ScaleContainer vpWidth={vpWidth} vpHeight={vpHeight} onScale={() => {}}>
+        <ScaleContainer vpWidth={vpWidth} vpHeight={vpHeight} scale={1} onScale={() => {}}>
           <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }} />
         </ScaleContainer>
       </div>

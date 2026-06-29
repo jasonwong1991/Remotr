@@ -13,6 +13,8 @@ const FULL_SNAPSHOT_TYPE = 2;
 const INCREMENTAL_SNAPSHOT_TYPE = 3;
 const MUTATION_SOURCE = 0;
 
+const ZOOM_LEVELS = [0.25, 0.5, 0.75, 1, 1.5, 2] as const;
+
 export default function PageMirror(): React.ReactElement {
   const rrwebEvents = useStore((s) => s.rrwebEvents);
   const t = useT();
@@ -26,6 +28,7 @@ export default function PageMirror(): React.ReactElement {
   const hasFullSnapshotRef = useRef(false);
   const treeRafRef = useRef<number | null>(null);
   const [ready, setReady] = React.useState(false);
+  const [userZoom, setUserZoom] = React.useState(1);
 
   // Overlays live in the scaled space (siblings of the iframe), so their
   // coordinates use iframe-internal values multiplied by the current scale.
@@ -259,8 +262,50 @@ export default function PageMirror(): React.ReactElement {
         overflow: 'auto',
         position: 'relative',
         background: 'var(--mirror-bg)',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
+      {/* Zoom toolbar */}
+      {ready && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 12px',
+            background: 'var(--bg-secondary)',
+            borderBottom: '1px solid var(--border)',
+            flexShrink: 0,
+            fontSize: 11,
+            zIndex: 10,
+          }}
+        >
+          <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Zoom:</span>
+          {ZOOM_LEVELS.map((level) => (
+            <button
+              key={level}
+              onClick={() => setUserZoom(level)}
+              style={{
+                background: userZoom === level ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
+                color: userZoom === level ? '#fff' : 'var(--text-primary)',
+                border: '1px solid var(--border)',
+                padding: '2px 8px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 11,
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              {Math.round(level * 100)}%
+            </button>
+          ))}
+          <span style={{ marginLeft: 'auto', color: 'var(--text-secondary)', fontSize: 10 }}>
+            {vp && `${vp.width}×${vp.height}`}
+          </span>
+        </div>
+      )}
+      <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
       {!ready && (
         <div
           style={{
@@ -284,6 +329,7 @@ export default function PageMirror(): React.ReactElement {
       <ScaleContainer
         vpWidth={vp?.width}
         vpHeight={vp?.height}
+        scale={userZoom}
         onScale={(s) => {
           scaleRef.current = s;
         }}
@@ -319,6 +365,7 @@ export default function PageMirror(): React.ReactElement {
           }}
         />
       </ScaleContainer>
+      </div>
     </div>
   );
 }
@@ -327,48 +374,32 @@ export function ScaleContainer({
   children,
   vpWidth,
   vpHeight,
+  scale,
   onScale,
 }: {
   children: React.ReactNode;
   vpWidth?: number;
   vpHeight?: number;
+  scale: number;
   onScale: (scale: number) => void;
 }): React.ReactElement {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = React.useState(1);
-
   useEffect(() => {
-    if (!wrapRef.current || !vpWidth || !vpHeight) return;
-
-    const obs = new ResizeObserver(([entry]) => {
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      const padding = 24;
-      const scaleX = Math.max(0, width - padding) / vpWidth;
-      const scaleY = Math.max(0, height - padding) / vpHeight;
-      const next = Math.min(scaleX, scaleY, 1);
-      setScale(next);
-      onScale(next);
-    });
-
-    obs.observe(wrapRef.current);
-    return () => obs.disconnect();
-  }, [vpWidth, vpHeight, onScale]);
+    onScale(scale);
+  }, [scale, onScale]);
 
   const shellWidth = vpWidth ? vpWidth * scale : undefined;
   const shellHeight = vpHeight ? vpHeight * scale : undefined;
 
   return (
     <div
-      ref={wrapRef}
       style={{
         width: '100%',
         height: '100%',
         minWidth: shellWidth ? `${shellWidth}px` : '100%',
         minHeight: shellHeight ? `${shellHeight}px` : '100%',
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        alignItems: 'flex-start',
+        justifyContent: 'flex-start',
         padding: 12,
       }}
     >
