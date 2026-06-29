@@ -208,8 +208,9 @@ async function handleHttp(
     return;
   }
 
-  // 注入 SDK 脚本
+  // 注入 SDK 脚本（短缓存 60s — 兼顾更新及时性与突发流量保护）
   if (pathname === '/remotr.js') {
+    res.setHeader('Cache-Control', 'public, max-age=60');
     await serveFile(res, opts.sdkPath, '.js');
     return;
   }
