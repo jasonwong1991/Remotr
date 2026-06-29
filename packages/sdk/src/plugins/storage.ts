@@ -107,7 +107,7 @@ function hookStorage(transport: Transport, type: StorageType, store: Storage): v
   const origRemove = store.removeItem.bind(store);
   const origClear = store.clear.bind(store);
 
-  store.setItem = (key: string, value: string) => {
+  const wrappedSet = (key: string, value: string) => {
     origSet(key, value);
     try {
       transport.send('storage.change', { storageType: type, action: 'set', key, value });
@@ -116,7 +116,7 @@ function hookStorage(transport: Transport, type: StorageType, store: Storage): v
     }
   };
 
-  store.removeItem = (key: string) => {
+  const wrappedRemove = (key: string) => {
     origRemove(key);
     try {
       transport.send('storage.change', { storageType: type, action: 'remove', key });
@@ -125,7 +125,7 @@ function hookStorage(transport: Transport, type: StorageType, store: Storage): v
     }
   };
 
-  store.clear = () => {
+  const wrappedClear = () => {
     origClear();
     try {
       transport.send('storage.change', { storageType: type, action: 'clear' });
@@ -133,4 +133,19 @@ function hookStorage(transport: Transport, type: StorageType, store: Storage): v
       /* ignore */
     }
   };
+
+  try {
+    // Use defineProperty instead of direct assignment: some webview kernels
+    // set writable:false on Storage methods, making = assignment throw.
+    // defineProperty still works when configurable:true (common case).
+    Object.defineProperties(store, {
+      setItem: { value: wrappedSet, writable: true, configurable: true },
+      removeItem: { value: wrappedRemove, writable: true, configurable: true },
+      clear: { value: wrappedClear, writable: true, configurable: true },
+    });
+  } catch {
+    // Storage is frozen/sealed — cannot intercept.
+    // Some modified webviews protect Storage.prototype from any mutation.
+    // Skip silently: storage monitoring degrades gracefully.
+  }
 }
