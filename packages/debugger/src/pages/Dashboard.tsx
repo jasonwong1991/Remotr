@@ -149,6 +149,16 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
     return Array.from(set).sort();
   }, [sessions]);
 
+  // deviceId → ua 映射,供设备下拉用 deviceDisplay 渲染出可读设备名
+  // (下拉项只有 deviceId,ua 藏在 systemInfo 里,故这里先建好查找表)。
+  const deviceUaMap = useMemo(() => {
+    const map = new Map<string, string | undefined>();
+    sessions.forEach((s) => {
+      if (!map.has(s.session.deviceId)) map.set(s.session.deviceId, s.systemInfo?.ua);
+    });
+    return map;
+  }, [sessions]);
+
   const t = useT();
 
   return (
@@ -267,19 +277,22 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
           onChange={setFilterIdentities}
           placeholder={t('dashboard.filterIdentityAll')}
           selectedLabel={t('dashboard.selected')}
+          searchPlaceholder={t('dashboard.filterSearchPlaceholder')}
+          emptyLabel={t('dashboard.filterNoMatch')}
           formatOption={(id) => (id.startsWith('dev_') ? `${id.slice(0, 10)}...` : id)}
-          minWidth={140}
         />
 
-        {/* 设备多选 */}
+        {/* 设备多选:展示可读设备名(型号·系统),可直接按型号搜索 */}
         <MultiSelect
           options={allDevices}
           selected={filterDevices}
           onChange={setFilterDevices}
           placeholder={t('dashboard.filterDeviceAll')}
           selectedLabel={t('dashboard.selected')}
-          formatOption={(dev) => `${dev.slice(0, 12)}...`}
-          minWidth={140}
+          searchPlaceholder={t('dashboard.filterSearchPlaceholder')}
+          emptyLabel={t('dashboard.filterNoMatch')}
+          formatOption={(dev) => deviceDisplay(dev, deviceUaMap.get(dev))}
+          minWidth={220}
         />
 
         {/* URL/标题搜索 */}

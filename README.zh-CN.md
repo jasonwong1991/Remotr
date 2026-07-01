@@ -8,7 +8,7 @@
 
 ## 特性
 
-- 🖥️ **页面镜像** — 基于 [rrweb](https://github.com/rrweb-io/rrweb) 实现实时录制和回放，忠实重建远程页面（样式、DOM 增量更新）
+- 🖥️ **页面镜像** — 基于 [rrweb](https://github.com/rrweb-io/rrweb) 实现实时录制和回放，忠实重建远程页面（样式、DOM 增量更新）；支持**手动缩放**(25%–200%)并自动居中
 - 🎮 **控制台** — 拦截 `console.*` + 全局错误/Promise 拒绝；支持**远程执行任意 JS**（eval）
 - 🌐 **网络** — 拦截 `fetch` / `XHR` / `sendBeacon`，显示 URL/状态/时序/请求头/响应体
 - 🧬 **元素** — 从 rrweb 镜像实时重建 DOM 树（隐藏/删除/编辑即时反映）；DevTools 风格右键菜单：复制 selector/XPath/JS-path/outerHTML，强制伪类（`:hover`/`:focus`/…），隐藏/编辑 HTML/删除，滚动到视图；查看并编辑匹配规则、计算样式、盒模型；元素拾取器
@@ -19,7 +19,7 @@
 - 📦 **单文件 SDK** — 使用 esbuild 构建为单个 IIFE（gzip 后约 60KB，包含 rrweb），目标页面无需依赖
 - 🔀 **多设备/多页面** — 每个设备和浏览器标签页都单独跟踪，使用持久化的设备 ID（localStorage）和确定性的页面 ID（URL 指纹 + 并发标签页 slot，重新打开同一页面即恢复同一 session）。非常适合调试多用户或跨设备测试。
 - 👥 **身份分组** — 使用 `data-identity-cookie` 按用户分组会话（如 alice、bob）。仪表盘自动按身份或设备分组，便于导航。
-- 📊 **仪表盘界面** — 在 `/#/dashboard` 查看所有连接会话的可视化概览。查看实时状态，点击任何会话进行调试。
+- 📊 **仪表盘界面** — 在 `/#/dashboard` 查看所有连接会话的可视化概览。查看实时状态，点击任何会话进行调试。筛选器支持**可搜索的可读设备名**(如 `iPhone · iOS 17`),不再是难以辨认的 ID。
 - 🌍 **国际化** — 内置中英文切换（默认英文）
 - 🎨 **主题** — 深色/浅色模式切换
 
@@ -254,34 +254,6 @@ http://<your-IP>:9777/#/session?room=default&deviceId=xxx&pageId=yyy
 ## Docker 部署
 
 偏好容器化？项目内置多阶段 `Dockerfile` 和 `docker-compose.yml`，无需本地 Node 工具链。
-
-### 使用预构建镜像（推荐）
-
-从 GitHub Container Registry 拉取最新镜像：
-
-```bash
-docker pull ghcr.io/jasonwong1991/remotr:main
-docker run -d -p 9777:9777 --name remotr ghcr.io/jasonwong1991/remotr:main
-```
-
-或在 `docker-compose.yml` 中使用预构建镜像：
-
-```yaml
-services:
-  remotr:
-    image: ghcr.io/jasonwong1991/remotr:main  # 使用预构建镜像
-    container_name: remotr
-    ports:
-      - "9777:9777"
-    # ... docker-compose.yml 中的其他配置
-```
-
-可用标签：
-- `main` — main 分支最新版
-- `v1.0.0`, `v1.0`, `v1` — 语义化版本标签（发布后可用）
-- `main-abc1234` — 提交 SHA 标签
-
-### 本地构建
 
 ```bash
 docker compose up -d        # 构建镜像并启动（端口 9777）

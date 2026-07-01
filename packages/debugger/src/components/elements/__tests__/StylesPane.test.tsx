@@ -92,7 +92,8 @@ describe('StylesPane', () => {
     const valueCell = screen.getByText(/^a+\.\.\.$/);
     expect(valueCell).toBeInTheDocument();
     expect(valueCell.textContent).toHaveLength(103); // 100 chars + '...'
-    expect(valueCell).toHaveAttribute('title', longValue);
+    // The title lives on the wrapping <td>; the value text is inside <EditableValue>.
+    expect(valueCell.closest('td')).toHaveAttribute('title', longValue);
   });
 
   it('shows "No styles match filter" when filter has no results', async () => {

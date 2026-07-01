@@ -1,6 +1,6 @@
 {
   "name": "remotr",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Remote debugging made effortless — inject a script and debug any webpage with a local DevTools-like interface",
   "workspaces": [

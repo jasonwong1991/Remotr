@@ -105,8 +105,8 @@ describe('ElementTree', () => {
 
     render(<ElementTree rootNode={rootNode} />);
 
-    const spanElement = screen.getByText(/<span/).closest('span');
-    expect(spanElement).toHaveStyle({ background: 'var(--accent-blue-transparent)' });
+    const spanElement = screen.getByText(/<span/).parentElement;
+    expect(spanElement).toHaveStyle({ background: 'var(--accent-blue)' });
   });
 
   it('expands and collapses nodes with children', async () => {
@@ -129,15 +129,17 @@ describe('ElementTree', () => {
 
     render(<ElementTree rootNode={rootNode} />);
 
-    // Initially expanded (depth < 2)
-    expect(screen.getByText(/<span/)).toBeInTheDocument();
+    // Collapsed by default: child hidden, collapsed indicator shown
+    expect(screen.queryByText(/<span/)).not.toBeInTheDocument();
+    expect(screen.getByText('…')).toBeInTheDocument();
 
-    // Click to collapse
+    // Click to expand: child becomes visible, collapsed indicator disappears
     const divElement = screen.getByText(/<div/).closest('span');
     await user.click(divElement!);
 
-    // Should show collapsed indicator
-    expect(screen.getByText('…')).toBeInTheDocument();
+    // After expand: child visible, collapsed indicator gone
+    expect(screen.getByText(/<span/)).toBeInTheDocument();
+    expect(screen.queryByText('…')).not.toBeInTheDocument();
   });
 
   it('renders text nodes with truncation', () => {
@@ -145,7 +147,7 @@ describe('ElementTree', () => {
     const rootNode: RrwebNode = {
       type: 2,
       id: 1,
-      tagName: 'div',
+      tagName: 'body', // body auto-expands so the text child renders without a click
       attributes: {},
       childNodes: [
         {
@@ -185,7 +187,7 @@ describe('ElementTree', () => {
     const rootNode: RrwebNode = {
       type: 2,
       id: 1,
-      tagName: 'div',
+      tagName: 'body', // body auto-expands so the text children render without a click
       attributes: {},
       childNodes: [
         {
@@ -227,8 +229,8 @@ describe('ElementTree', () => {
 
     render(<ElementTree rootNode={rootNode} />);
 
-    // Should show expand indicator (▾ when expanded)
-    expect(screen.getByText('▾')).toBeInTheDocument();
+    // Collapsed by default — shows the collapse indicator
+    expect(screen.getByText('▸')).toBeInTheDocument();
   });
 
   it('does not show expand indicator for leaf nodes', () => {

@@ -31,7 +31,7 @@ export function SpyAtomView({ atom, depth = 0 }: Props): React.ReactElement {
   if (!hasChildren) {
     return (
       <span style={{ color: getColor(atom.type), fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-        {atom.type === 'string' ? `"${atom.display}"` : atom.display}
+        {atom.display}
         {atom.circular ? <span style={{ color: '#858585' }}> [Circular]</span> : null}
         {atom.truncated ? <span style={{ color: '#858585' }}> …</span> : null}
       </span>

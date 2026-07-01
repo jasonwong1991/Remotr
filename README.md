@@ -8,7 +8,7 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 
 ## Features
 
-- 🖥️ **Page Mirror** — Built on [rrweb](https://github.com/rrweb-io/rrweb) for real-time recording and replay, faithfully reconstructing the remote page (styles, DOM incremental updates)
+- 🖥️ **Page Mirror** — Built on [rrweb](https://github.com/rrweb-io/rrweb) for real-time recording and replay, faithfully reconstructing the remote page (styles, DOM incremental updates); **manual zoom** (25%–200%) with auto-centering
 - 🎮 **Console** — Intercepts `console.*` + global errors/Promise rejections; supports **executing arbitrary JS** remotely (eval)
 - 🌐 **Network** — Intercepts `fetch` / `XHR` / `sendBeacon`, displaying URL/status/timing/headers/body
 - 🧬 **Elements** — Live DOM tree rebuilt from the rrweb mirror (hide/delete/edit reflect instantly); DevTools-style right-click menu: copy selector/XPath/JS-path/outerHTML, force pseudo-states (`:hover`/`:focus`/…), hide/edit-HTML/delete, scroll into view; inspect & edit matched rules, computed styles, and box model; element picker
@@ -253,34 +253,6 @@ Click "← Dashboard" button in session view to return.
 ## Docker Deployment
 
 Prefer containers? A multi-stage `Dockerfile` and `docker-compose.yml` are included — no local Node toolchain needed.
-
-### Using pre-built images (recommended)
-
-Pull the latest image from GitHub Container Registry:
-
-```bash
-docker pull ghcr.io/jasonwong1991/remotr:main
-docker run -d -p 9777:9777 --name remotr ghcr.io/jasonwong1991/remotr:main
-```
-
-Or use `docker-compose.yml` with the pre-built image:
-
-```yaml
-services:
-  remotr:
-    image: ghcr.io/jasonwong1991/remotr:main  # Use pre-built image
-    container_name: remotr
-    ports:
-      - "9777:9777"
-    # ... rest of config from docker-compose.yml
-```
-
-Available tags:
-- `main` — latest from the main branch
-- `v1.0.0`, `v1.0`, `v1` — semantic version tags (when released)
-- `main-abc1234` — commit SHA tags
-
-### Building locally
 
 ```bash
 docker compose up -d        # Build image and start (port 9777)

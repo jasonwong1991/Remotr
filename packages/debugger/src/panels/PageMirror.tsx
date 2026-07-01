@@ -397,10 +397,8 @@ export function ScaleContainer({
         height: '100%',
         minWidth: shellWidth ? `${shellWidth}px` : '100%',
         minHeight: shellHeight ? `${shellHeight}px` : '100%',
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'flex-start',
         padding: 12,
+        boxSizing: 'border-box',
       }}
     >
       {/* Scaled stage: iframe + overlays share this transformed coordinate space */}
@@ -409,7 +407,7 @@ export function ScaleContainer({
           position: 'relative',
           width: shellWidth ? `${shellWidth}px` : '100%',
           height: shellHeight ? `${shellHeight}px` : '100%',
-          flex: '0 0 auto',
+          margin: 'auto',
           overflow: 'hidden',
         }}
       >
