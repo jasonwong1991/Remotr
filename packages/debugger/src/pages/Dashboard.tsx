@@ -12,6 +12,7 @@ import LanguageToggle from '../components/LanguageToggle';
 import { parseDevice, deviceDisplay } from '../ua';
 import { useT, type MessageKey, type TFunc } from '../i18n';
 import MultiSelect from '../components/MultiSelect';
+import { usePersistentState, stringSetSerde } from '../usePersistentState';
 
 type GroupBy = 'identity' | 'device';
 
@@ -22,13 +23,14 @@ interface DashboardProps {
 export default function Dashboard({ room }: DashboardProps): React.ReactElement {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
   const [connStatus, setConnStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [groupBy, setGroupBy] = useState<GroupBy>('identity');
 
-  // 过滤状态
-  const [filterIdentities, setFilterIdentities] = useState<Set<string>>(new Set());
-  const [filterDevices, setFilterDevices] = useState<Set<string>>(new Set());
-  const [filterUrl, setFilterUrl] = useState('');
-  const [filterOnlineOnly, setFilterOnlineOnly] = useState(false);
+  // 分组 + 过滤状态:按 room 隔离持久化到 localStorage,
+  // 刷新页面或从 Session 返回后自动恢复,免去重复操作。
+  const [groupBy, setGroupBy] = usePersistentState<GroupBy>(`dashboard.${room}.groupBy`, 'identity');
+  const [filterIdentities, setFilterIdentities] = usePersistentState(`dashboard.${room}.filterIdentities`, new Set<string>(), stringSetSerde);
+  const [filterDevices, setFilterDevices] = usePersistentState(`dashboard.${room}.filterDevices`, new Set<string>(), stringSetSerde);
+  const [filterUrl, setFilterUrl] = usePersistentState(`dashboard.${room}.filterUrl`, '');
+  const [filterOnlineOnly, setFilterOnlineOnly] = usePersistentState(`dashboard.${room}.filterOnlineOnly`, false);
 
   useEffect(() => {
     const { protocol, host } = window.location;

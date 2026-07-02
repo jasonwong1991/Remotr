@@ -7,6 +7,7 @@ import { formatConsoleArgs } from '../components/formatC';
 import { sendEval } from '../ws';
 import { resolveStack, type ResolvedFrame } from '../sources';
 import { useT } from '../i18n';
+import { usePersistentState } from '../usePersistentState';
 
 type LevelFilter = 'all' | 'log' | 'info' | 'warn' | 'error' | 'debug';
 
@@ -185,8 +186,11 @@ export default function ConsolePanel(): React.ReactElement {
   const records = useStore((s) => s.consoleRecords);
   const clearConsole = useStore((s) => s.clearConsole);
   const addEvalResult = useStore((s) => s.addEvalResult);
-  const [levelFilter, setLevelFilter] = useState<LevelFilter>('all');
-  const [textFilter, setTextFilter] = useState('');
+  // 级别 / 文本筛选:全局持久化,刷新或切换 Tab 后自动恢复。
+  // 有意不按 session 隔离——pageId 动态且无限,按 session 存会使存储键无限膨胀;
+  // 且筛选本质是使用习惯偏好,全局共享更符合直觉。
+  const [levelFilter, setLevelFilter] = usePersistentState<LevelFilter>('console.levelFilter', 'all');
+  const [textFilter, setTextFilter] = usePersistentState('console.textFilter', '');
   const [evalInput, setEvalInput] = useState('');
   const [evalRunning, setEvalRunning] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
