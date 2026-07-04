@@ -4,6 +4,7 @@ import ElementTree from '../components/elements/ElementTree';
 import StylesPane from '../components/elements/StylesPane';
 import BoxModelPane from '../components/elements/BoxModelPane';
 import EditableStylesPane from '../components/elements/EditableStylesPane';
+import ComponentPane from '../components/elements/ComponentPane';
 import PickerButton from '../components/elements/PickerButton';
 import { sendCommand } from '../ws';
 import type { RrwebNode } from '../components/elements/ElementTree';
@@ -24,7 +25,7 @@ export default function ElementsPanel(): React.ReactElement {
   // The tree is rebuilt from the rrweb mirror by PageMirror, so it reflects
   // live DOM changes (hide / delete / edit) instead of the one-shot snapshot.
   const rootNode = useStore((s) => s.domTree);
-  const [inspectorTab, setInspectorTab] = useState<'computed' | 'boxModel' | 'styles'>('styles');
+  const [inspectorTab, setInspectorTab] = useState<'computed' | 'boxModel' | 'styles' | 'component'>('styles');
   const [boxModel, setBoxModel] = useState<BoxModel | null>(null);
   const [rulesResult, setRulesResult] = useState<{ inlineStyles: Record<string, string>; rules: CSSRule[] } | null>(null);
   const [computedStatus, setComputedStatus] = useState<LoadStatus>('idle');
@@ -241,9 +242,9 @@ export default function ElementsPanel(): React.ReactElement {
         <div onMouseDown={onMouseDown} style={{ width: 4, cursor: 'col-resize', background: 'var(--border)', flexShrink: 0 }} />
         <div style={{ flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            {(['styles', 'computed', 'boxModel'] as const).map((tab) => (
+            {(['styles', 'computed', 'boxModel', 'component'] as const).map((tab) => (
         <button key={tab} onClick={() => setInspectorTab(tab)} style={{ border: 'none', borderBottom: inspectorTab === tab ? '2px solid var(--accent-blue)' : '2px solid transparent', borderRadius: 0, background: inspectorTab === tab ? 'var(--bg-primary)' : 'transparent', color: inspectorTab === tab ? 'var(--text-primary)' : 'var(--text-secondary)', padding: '6px 14px', cursor: 'pointer', fontSize: 12 }}>
-            {tab === 'styles' ? t('tab.styles') : tab === 'computed' ? t('tab.computed') : t('tab.boxModel')}
+            {tab === 'styles' ? t('tab.styles') : tab === 'computed' ? t('tab.computed') : tab === 'boxModel' ? t('tab.boxModel') : t('tab.component')}
            </button>
             ))}
           </div>
@@ -251,6 +252,7 @@ export default function ElementsPanel(): React.ReactElement {
           {inspectorTab === 'styles' && <EditableStylesPane inlineStyles={rulesResult?.inlineStyles ?? null} rules={rulesResult?.rules ?? null} nodeId={selectedNodeId} status={rulesStatus} error={rulesError} onRetry={fetchData} onStyleSaved={handleStyleSaved} />}
          {inspectorTab === 'computed' && <StylesPane styles={selectedElementData?.computedStyles ?? null} nodeId={selectedNodeId} status={computedStatus} error={computedError} onRetry={fetchData} onStyleSaved={handleStyleSaved} onStyleError={setComputedError} />}
          {inspectorTab === 'boxModel' && <BoxModelPane boxModel={boxModel} />}
+         {inspectorTab === 'component' && <ComponentPane nodeId={selectedNodeId} />}
           </div>
         </div>
       </div>

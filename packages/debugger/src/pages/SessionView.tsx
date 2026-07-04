@@ -12,6 +12,7 @@ import NetworkPanel from '../panels/NetworkPanel';
 import ElementsPanel from '../panels/ElementsPanel';
 import StoragePanel from '../panels/StoragePanel';
 import SourcesPanel from '../panels/SourcesPanel';
+import TracePanel from '../panels/TracePanel';
 import ThemeToggle from '../components/ThemeToggle';
 import LanguageToggle from '../components/LanguageToggle';
 import { navigateToReplay } from '../router';
@@ -19,7 +20,7 @@ import { deviceDisplay } from '../ua';
 import { useT, type MessageKey } from '../i18n';
 import { copyToClipboard } from '../clipboard';
 
-type Tab = 'console' | 'network' | 'elements' | 'storage' | 'sources';
+type Tab = 'console' | 'network' | 'elements' | 'storage' | 'sources' | 'trace';
 
 const STATUS_COLORS: Record<string, string> = {
   connected: '#4caf50',
@@ -124,7 +125,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
     if (sourceView) setActiveTab('sources');
   }, [sourceView]);
 
-  const tabs: Tab[] = ['elements', 'console', 'sources', 'network', 'storage'];
+  const tabs: Tab[] = ['elements', 'console', 'trace', 'sources', 'network', 'storage'];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
@@ -300,6 +301,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
 
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {activeTab === 'console' && <ConsolePanel />}
+            {activeTab === 'trace' && <TracePanel />}
             {activeTab === 'sources' && <SourcesPanel />}
             {activeTab === 'network' && <NetworkPanel />}
             {activeTab === 'elements' && <ElementsPanel />}

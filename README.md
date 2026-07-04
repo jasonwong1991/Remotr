@@ -12,6 +12,8 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 - 🎮 **Console** — Intercepts `console.*` + global errors/Promise rejections; supports **executing arbitrary JS** remotely (eval)
 - 🌐 **Network** — Intercepts `fetch` / `XHR` / `sendBeacon`, displaying URL/status/timing/headers/body
 - 🧬 **Elements** — Live DOM tree rebuilt from the rrweb mirror (hide/delete/edit reflect instantly); DevTools-style right-click menu: copy selector/XPath/JS-path/outerHTML, force pseudo-states (`:hover`/`:focus`/…), hide/edit-HTML/delete, scroll into view; inspect & edit matched rules, computed styles, and box model; element picker
+- ⚛️ **Component Inspection (React / Vue)** — Select any element in the mirror and the Elements panel's **Component** sub-tab shows the owning framework component: name, framework badge, ancestor chain, **props** and **state** (React hooks / class state, Vue 3 setup/data, Vue 2 `$data`). Reads the same DOM-attached fibers/instances React & Vue DevTools use — no app-side setup, per-element detection so mixed-framework pages work.
+- 🎯 **Function Tracepoints** — Trace any globally-reachable function by dotted path (e.g. `app.store.dispatch`) without pausing execution. Each call reports **arguments / return value / thrown error / call stack / duration**, serialized just like console objects. Optional condition expression (referencing `args` / `ret`) filters noisy call sites — a no-pause alternative to breakpoints for injected debugging.
 - 💾 **Storage** — View, edit, and delete localStorage / sessionStorage / Cookies (bidirectional)
 - 🗺️ **Sources & Source Maps** — Browse the page's scripts; the SDK fetches scripts and `.map` files same-origin (bypassing panel CORS) and resolves minified stacks back to original `src/Foo.tsx:42` with a code snippet. Console errors get a "resolve source" button that jumps straight to the original line.
 - 🤖 **AI-Assisted Fixing (MCP)** — A built-in MCP server exposes live errors, source-map-resolved stacks, and console/network context to **Claude Code**. One "Copy for AI fix" button in the session view hands Claude everything it needs to locate and fix the error in your real repo. Graceful degradation: works without source maps too (resolves to minified position + full context).
@@ -308,7 +310,24 @@ npm test -w @remotr/sourcemap   # Source-map resolver unit tests
 node packages/mcp/test/integration.mjs   # MCP end-to-end (server + fake SDK + resolution)
 ```
 
-`examples/demo.html` is a built-in test page covering various collection scenarios.
+### Trying the example pages
+
+The Remotr server does **not** serve the `examples/` directory (unknown paths fall back to the debug panel), so run the zero-dependency static server alongside it:
+
+```bash
+npm start           # Terminal 1 — Remotr server (panel + SDK + WS) on :9777
+npm run examples    # Terminal 2 — static server for examples/ on :8899
+# custom port: npm run examples -- --port 3000
+```
+
+Then open (note: no `/examples/` prefix — the static root **is** `examples/`):
+
+- `http://localhost:8899/` — index listing all demos
+- `http://localhost:8899/demo.html` — console/network/storage/DOM scenarios
+- `http://localhost:8899/demo-react.html` — React app for Component inspection
+- `http://localhost:8899/demo-vue.html` — Vue 3 app for Component inspection
+
+Each demo injects the SDK from `localhost:9777`, so the server must run on port 9777.
 
 ## How It Works
 

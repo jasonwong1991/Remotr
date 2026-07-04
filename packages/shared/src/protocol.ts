@@ -362,6 +362,103 @@ export interface SourcesFetchResult {
 }
 
 // ─────────────────────────────────────────────────────────
+// Trace(函数追踪点:命中时上报入参/返回值/调用栈,不暂停执行)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 一个追踪点定义。SDK 按 `path`(点号分隔,如 "app.store.dispatch")从全局作用域
+ * 解析出目标函数,用 Object.defineProperty 包装它,每次调用上报一条 trace.hit。
+ */
+export interface TracepointDef {
+  /** 追踪点 ID(面板生成,用于取消) */
+  id: string;
+  /** 目标函数的点号路径,从 window 解析,如 "app.cart.calcTotal" */
+  path: string;
+  /**
+   * 可选过滤条件表达式,在调用之后求值,可引用 `args`(参数数组)、`ret`(返回值)、
+   * `self`(this)。返回真值才上报。留空则每次调用都上报。
+   * 条件抛错时 fail-open(照常上报),避免"静默无输出"的调试困惑。
+   */
+  condition?: string;
+}
+
+export interface TraceSetCmd {
+  tracepoint: TracepointDef;
+}
+export interface TraceSetResult {
+  /** 是否成功解析并包装了目标函数 */
+  ok: boolean;
+  /** 失败原因(路径解析失败 / 目标非函数 / 不可配置) */
+  error?: string;
+}
+
+export interface TraceRemoveCmd {
+  id: string;
+}
+export interface TraceRemoveResult {
+  ok: boolean;
+}
+
+/** 一次函数调用命中(SDK → 调试端) */
+export interface TraceHitEvent {
+  /** 对应的追踪点 ID */
+  id: string;
+  /** 目标函数路径(冗余携带,便于面板分组展示) */
+  path: string;
+  /** 第几次命中(该追踪点自设置以来的调用序号,从 1 开始) */
+  seq: number;
+  /** 入参列表 */
+  args: SpyAtom[];
+  /** 返回值;函数抛错时为 undefined,错误见 thrown */
+  ret?: SpyAtom;
+  /** 函数抛出的异常(序列化);正常返回时为空 */
+  thrown?: SpyAtom;
+  /** 调用栈文本(new Error().stack,去掉包装帧) */
+  stack?: string;
+  /** 同步执行耗时(毫秒) */
+  durationMs: number;
+}
+
+// ─────────────────────────────────────────────────────────
+// Framework(框架组件检查:React fiber / Vue 实例)
+// ─────────────────────────────────────────────────────────
+
+/** 检测到的前端框架 */
+export type DetectedFramework = 'react' | 'vue3' | 'vue2';
+
+/** 组件祖先链中的一项(从被选元素所属组件向根方向) */
+export interface ComponentAncestor {
+  /** 组件显示名;匿名组件为 "Anonymous" */
+  name: string;
+}
+
+export interface FrameworkInspectCmd {
+  /** rrweb 节点 ID(与 elements.* 命令一致,SDK 经 mirror 解析为真实元素) */
+  nodeId: number;
+}
+
+export interface FrameworkInspectResult {
+  /** 命中的框架;元素不属于任何已知框架组件时为 null */
+  framework: DetectedFramework | null;
+  /** 组件显示名 */
+  componentName?: string;
+  /** 组件 props(SpyAtom 序列化) */
+  props?: SpyAtom;
+  /**
+   * 组件状态:
+   * - React 函数组件:hooks 链上各 useState/useReducer 的 memoizedState 列表
+   * - React 类组件:this.state
+   * - Vue3:setupState(<script setup> / setup() 返回值)
+   * - Vue2:$data
+   */
+  state?: SpyAtom;
+  /** 组件祖先链(不含自身,靠近自身的在前),用于面包屑展示 */
+  ancestors?: ComponentAncestor[];
+  /** 元素不属于组件 / 解析失败时的说明 */
+  error?: string;
+}
+
+// ─────────────────────────────────────────────────────────
 // 方法名 → 数据类型 映射表（单一事实来源，DRY）
 // ─────────────────────────────────────────────────────────
 
@@ -376,10 +473,14 @@ export interface MethodData {
   'system.info': SystemInfoEvent;
   'page.error': PageErrorEvent;
   'dom.rrweb': DomRrwebEvent;
+  'trace.hit': TraceHitEvent;
   // Dashboard 事件 (Server → debugger)
   'dashboard.sessions': DashboardSessionsEvent;
   // 命令 (debugger → SDK)
   'eval.run': EvalRunCmd;
+  'trace.set': TraceSetCmd;
+  'trace.remove': TraceRemoveCmd;
+  'framework.inspect': FrameworkInspectCmd;
   'storage.getAll': StorageGetAllCmd;
   'storage.set': StorageSetCmd;
   'storage.delete': StorageDeleteCmd;
@@ -414,6 +515,7 @@ export type EventMethod =
   | 'system.info'
   | 'page.error'
   | 'dom.rrweb'
+  | 'trace.hit'
   | 'elements.picked';
 
 /** 调试端 → SDK 的命令方法名 */
@@ -436,4 +538,52 @@ export type CommandMethod =
   | 'elements.scrollIntoView'
   | 'elements.setForcedStates'
   | 'sources.list'
-  | 'sources.fetch';
+  | 'sources.fetch'
+  | 'trace.set'
+  | 'trace.remove'
+  | 'framework.inspect';
+
+/**
+ * 运行时已知方法名集合 —— 与上面的 MethodData / EventMethod / CommandMethod 对应,
+ * 供服务端在转发前做方法名校验(类型在运行时不可用,故单独维护此常量)。
+ * 新增协议方法时,请同步在此登记。
+ */
+export const KNOWN_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
+  // 事件 (SDK → debugger)
+  'console.entry',
+  'network.request',
+  'network.response',
+  'network.error',
+  'storage.snapshot',
+  'storage.change',
+  'system.info',
+  'page.error',
+  'dom.rrweb',
+  'trace.hit',
+  'elements.picked',
+  // Dashboard 事件 (Server → debugger)
+  'dashboard.sessions',
+  // 命令 (debugger → SDK)
+  'eval.run',
+  'trace.set',
+  'trace.remove',
+  'framework.inspect',
+  'storage.getAll',
+  'storage.set',
+  'storage.delete',
+  'storage.clear',
+  'page.reload',
+  'elements.getComputedStyles',
+  'elements.getBoxModel',
+  'elements.getMatchedRules',
+  'elements.highlight',
+  'elements.startPicker',
+  'elements.stopPicker',
+  'elements.setStyle',
+  'elements.deleteNode',
+  'elements.setHTML',
+  'elements.scrollIntoView',
+  'elements.setForcedStates',
+  'sources.list',
+  'sources.fetch',
+]);

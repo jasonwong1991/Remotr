@@ -6,6 +6,8 @@ import { installPage } from './plugins/page.js';
 import { installSources } from './plugins/sources.js';
 import { installRrweb } from './plugins/rrweb.js';
 import { installElements } from './plugins/elements.js';
+import { installTrace } from './plugins/trace.js';
+import { installFramework } from './plugins/framework.js';
 import { SDK_VERSION } from './version.js';
 import { getDeviceId, getPageId, getIdentity } from './session.js';
 import type { SessionId } from '@remotr/shared';
@@ -58,6 +60,8 @@ export function start(config: REMOTRConfig = {}): void {
   installSources(transport);
   if (mirror) installRrweb(transport);
   installElements(transport);
+  installFramework(transport);
+  installTrace(transport);
 
   transport.connect();
 

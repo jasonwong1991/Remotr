@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Remotr Vue Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px;
+      color: #222;
+      background: #f7f8fa;
+    }
+    h1 { color: #42b883; }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 20px;
+      margin: 16px 0;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    button {
+      background: #42b883;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 4px;
+      font-size: 14px;
+    }
+    button:hover { background: #369a6e; }
+    input {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      margin: 4px;
+      width: 200px;
+    }
+    #count { font-size: 32px; font-weight: bold; color: #42b883; }
+    .todo-list { list-style: none; padding: 0; }
+    .todo-item {
+      padding: 8px 12px;
+      margin: 4px 0;
+      background: #f0f8f4;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .todo-item.done { opacity: 0.6; text-decoration: line-through; }
+  </style>
+</head>
+<body>
+  <h1>🟢 Remotr Vue 3 Demo</h1>
+  <p>Elements 面板选中下方任意元素 → Component 子页应显示所属组件、props 与 setup/data 状态。</p>
+  <div id="app"></div>
+
+  <!-- Vue 3 global dev 版(含模板编译器;dev 构建在元素上挂 __vueParentComponent) -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script>
+    const { createApp, ref } = Vue;
+
+    // 叶子组件:props(todo)(验证 props 提取)
+    const TodoItem = {
+      name: 'TodoItem',
+      props: { todo: { type: Object, required: true } },
+      emits: ['toggle'],
+      template: `<li class="todo-item" :class="{ done: todo.done }" @click="$emit('toggle', todo.id)">{{ todo.done ? '✅' : '⬜' }} {{ todo.text }}</li>`,
+    };
+
+    // 中间组件:纯 props 传递(验证祖先链 App > TodoList > TodoItem)
+    const TodoList = {
+      name: 'TodoList',
+      components: { TodoItem },
+      props: { todos: { type: Array, required: true } },
+      emits: ['toggle'],
+      template: `<ul class="todo-list"><TodoItem v-for="t in todos" :key="t.id" :todo="t" @toggle="$emit('toggle', $event)" /></ul>`,
+    };
+
+    // setup() 组件(验证 setupState 提取)
+    const CounterCard = {
+      name: 'CounterCard',
+      setup() {
+        const count = ref(0);
+        const inc = () => count.value++;
+        return { count, inc };
+      },
+      template: `<div class="card"><h3>Counter (setup state)</h3><div id="count">{{ count }}</div><button @click="inc">+1</button></div>`,
+    };
+
+    // 根组件:options data(验证 data 提取)+ 组合子组件
+    createApp({
+      name: 'App',
+      components: { TodoList, CounterCard },
+      data() {
+        return {
+          todos: [
+            { id: 1, text: '注入 SDK', done: true },
+            { id: 2, text: '选中元素看组件', done: false },
+          ],
+          input: '',
+        };
+      },
+      methods: {
+        onToggle(id) {
+          const t = this.todos.find((t) => t.id === id);
+          if (t) t.done = !t.done;
+        },
+        addTodo() {
+          if (!this.input) return;
+          this.todos.push({ id: Date.now(), text: this.input, done: false });
+          this.input = '';
+        },
+      },
+      template: `<div>
+        <CounterCard />
+        <div class="card">
+          <h3>TodoList (props + data)</h3>
+          <input v-model="input" placeholder="new todo..." />
+          <button @click="addTodo">Add</button>
+          <TodoList :todos="todos" @toggle="onToggle" />
+        </div>
+      </div>`,
+    }).mount('#app');
+  </script>
+
+  <!-- Inject Remotr SDK: replace with your server address -->
+  <script src="http://localhost:9777/remotr.js" data-room="default"></script>
+</body>
+</html>

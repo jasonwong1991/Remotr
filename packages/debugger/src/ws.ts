@@ -7,6 +7,7 @@ import {
   type Reply,
   type SessionId,
   type SpyAtom,
+  type TracepointDef,
 } from '@remotr/shared';
 import { useStore } from './store';
 import { clearSourcesCache } from './sources';
@@ -112,6 +113,9 @@ function handleFrame(raw: string, generation: number): void {
       break;
     case 'page.error':
       store.addPageError(data as MethodData['page.error'], timestamp);
+      break;
+    case 'trace.hit':
+      store.addTraceHit(data as MethodData['trace.hit'], timestamp);
       break;
     case 'dom.rrweb': {
       const d = data as MethodData['dom.rrweb'];
@@ -269,4 +273,26 @@ export async function sendEval(code: string): Promise<SpyAtom | null> {
 
 export async function deleteElement(nodeId: number): Promise<Reply> {
   return sendCommand('elements.deleteNode', { nodeId });
+}
+
+/** 设置函数追踪点。返回 SDK 侧的 { ok, error }(路径解析/包装失败时 ok=false)。 */
+export async function setTracepoint(
+  tracepoint: TracepointDef,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const reply = await sendCommand('trace.set', { tracepoint });
+    if (reply.error) return { ok: false, error: reply.error };
+    return (reply.result as { ok: boolean; error?: string }) ?? { ok: false, error: 'No result' };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 移除函数追踪点(幂等)。 */
+export async function removeTracepoint(id: string): Promise<void> {
+  try {
+    await sendCommand('trace.remove', { id });
+  } catch {
+    /* ignore — SDK may be offline; local state is cleared by caller */
+  }
 }

@@ -1,412 +1,178 @@
 # Remotr 远程断点调试可行性分析
 
+> **v2.0 重要更正**:v1.0 推荐的"方案 A:chii+chobitsu 完整断点"结论**有误**。
+> 经核实 chobitsu 源码(2026-07-03),其 `Debugger` domain 仅实现 `enable`(上报
+> `Debugger.scriptParsed`)、`getScriptSource`、`setProxy` 三个方法——**不存在**
+> `setBreakpointByUrl` / `pause` / `resume` / 单步等任何断点能力。chii + chobitsu
+> 接 DevTools frontend 后,Sources 面板只能查看源码,无法打断点。
+> v1.0 的方案 A 不可执行,本版全面重写。
+
 ## 执行摘要
 
-基于对 CDP、weinre/eruda/chii、rrweb 架构的深度调研，**远程 JS 断点调试在 Remotr 中技术上完全可行**，但工程量与你当前架构的融合度成反比。给出三个递进方案：
+**在"零配置注入"的产品约束下,真断点(暂停/单步/查看局部变量)不可实现**——这是
+JS 单线程模型与浏览器安全模型的物理性限制,不是工程量问题。可行路线只有两条,
+外加一套推荐的替代方案:
 
-| 方案 | 断点支持 | 工程量 | 与现有架构兼容性 | 推荐度 |
-|------|---------|-------|-----------------|--------|
-| **A. 集成 chii+chobitsu（纯 JS CDP 实现）** | ✅ 完整（行断点、条件断点、单步、scope 查看） | 🟡 中（2-3周） | 🟢 高（与 rrweb 共存，复用 WebSocket） | ⭐⭐⭐⭐⭐ |
-| **B. 原生 CDP 代理（要求用户浏览器开 debug 端口）** | ✅ 原生（V8 引擎级） | 🟡 中（2周） | 🔴 低（与 rrweb 冲突，需用户配置） | ⭐⭐ |
-| **C. 轻量级伪断点（logpoints + console.trace）** | ⚠️ 部分（无真暂停，只日志） | 🟢 低（3天） | 🟢 高 | ⭐⭐⭐ |
+| 路线 | 断点能力 | 工程量 | 与产品定位 | 推荐度 |
+|------|---------|-------|-----------|--------|
+| **A. 构建期插桩(vdebugger 路线)** | ✅ 真暂停/单步/scope | 3-4 周 | ⚠️ 要求业务方改构建,冲突零配置定位 | ⭐⭐⭐(opt-in) |
+| **B. 浏览器扩展(chrome.debugger)** | ✅ V8 引擎级 | 4+ 周 | ❌ 仅桌面 Chrome,丢失移动 H5/微信核心场景 | ⭐ |
+| **C. 无暂停调试套件(替代方案)** | ⚠️ 不暂停,覆盖断点 ~90% 使用动机 | ~2 周 | ✅ 零侵入,完全契合 | ⭐⭐⭐⭐⭐ |
 
-**推荐方案 A**：集成 chii+chobitsu——既得到完整断点能力，又不破坏现有 rrweb 录制，且无需用户配置浏览器。下文详细展开。
-
----
-
-## 技术背景：三种远程调试路径
-
-### 1. 原生 CDP（Chrome DevTools Protocol）
-
-**工作原理**：
-- 浏览器/Node.js 启动时加 `--remote-debugging-port=9222`
-- 暴露 HTTP 服务发现 API：`GET http://localhost:9222/json/list` 返回可调试目标列表
-- 每个目标有 `webSocketDebuggerUrl`（如 `ws://localhost:9222/devtools/page/{id}`）
-- 客户端通过 WebSocket 发送 JSON-RPC 命令（`Debugger.setBreakpointByUrl`、`Debugger.stepOver` 等）
-- 浏览器 V8 引擎内置的 Inspector 响应命令、发射事件（`Debugger.paused`、`Runtime.consoleAPICalled`）
-
-**优势**：
-- 真正的引擎级断点（零开销、完全准确）
-- Chrome DevTools 本身就是 CDP 客户端，协议成熟、文档完善
-- Puppeteer、Playwright、VS Code debugger 都基于此
-
-**劣势**：
-- **要求用户主动以 debug 模式启动浏览器**（移动端、生产环境不现实）
-- **与 rrweb 互斥**：CDP 原生调试需要控制整个页面；rrweb 注入脚本会干扰调试上下文
-- 无法调试已有 session——必须在打开页面前就配置好
-
-**Remotr 适用性**：❌ **不适合**。你的场景是"用户已经在手机/生产环境打开了页面"，让用户关掉浏览器、加参数重启不现实。
+**推荐决策**:Phase 1 做方案 C(函数级 Tracepoint + Watch 表达式);Phase 2 视需求
+将方案 A 作为 opt-in 高级功能(先 PoC 验证)。
 
 ---
 
-### 2. 纯 JS CDP 实现（chii + chobitsu）
+## 一、根本约束:注入式 SDK 为什么做不了真暂停
 
-**工作原理**：
-- 目标页面注入一个脚本（类似 Remotr SDK），脚本内部实现 CDP 协议的 `Debugger`、`Runtime`、`DOM` 等 domain
-- 脚本通过 WebSocket 连接到 chii server（一个 Node.js 中继），server 再为 DevTools frontend（或自定义面板）提供标准 CDP WebSocket
-- 断点实现：
-  - 维护断点表（script URL + line → breakpoint ID）
-  - 监听脚本加载，报告 `Debugger.scriptParsed` 事件
-  - **关键**：用 AST 改写或动态注入的方式在断点行前插入"检查点"——如果该行有活跃断点，调用 `await debuggerPause()`（一个内部 Promise，resolve 时继续）
-  - 暂停时，捕获调用栈（`Error.stack`）、枚举 scope 变量（`Runtime.getProperties` 对 closure 对象）、发射 `Debugger.paused` 事件
-  - 单步：设置临时断点到下一行并 resume
+1. **JS 单线程**:SDK 与业务代码运行在同一线程。SDK 无法从线程内部暂停线程本身——
+   暂停自己即暂停一切,包括接收 `resume` 命令的 WebSocket 消息回调。不存在
+   "挂起业务代码、同时保持 SDK 响应"的执行模型。
+2. **`debugger;` 语句**仅在本地 DevTools 已附加时触发暂停,远程场景下是 no-op,
+   无法作为远程断点的实现载体。
+3. **V8 Inspector 级断点**需要浏览器特权入口:
+   - `--remote-debugging-port`(桌面浏览器启动参数)——移动端/微信 webview 无法配置;
+   - `chrome.debugger` 扩展 API——需要用户安装扩展,且仅桌面 Chrome。
+   两者都不覆盖 Remotr 的核心场景(移动 H5、微信 webview、智能电视/车机浏览器)。
 
-**优势**：
-- **无需浏览器配置**——普通页面加载即可
-- **与 rrweb 完全兼容**——两者都是注入脚本，互不干扰（chobitsu 负责调试，rrweb 负责录制 DOM）
-- **移动端/生产可用**——只要能注入脚本就能调试
-- **成熟方案**：chii 是 weinre 精神继承者，已在生产环境验证（eruda 生态）
+**唯一例外**:在**构建期**把业务代码改写为 generator 函数,用 `yield` 在断点位置
+让出控制权——执行"暂停"在 generator 内部,事件循环仍在运转,SDK 可继续收发命令。
+这就是微信团队 [vdebugger](https://github.com/wechatjs/vdebugger) 的路线(方案 A)。
 
-**劣势**：
-- 暂停机制是"软"的（同线程 Promise 控制流，而非真正的 V8 Inspector 暂停）——理论上能被恶意代码绕过，但正常调试场景无影响
-- 性能：断点改写有轻微开销（但只在设置断点的脚本生效）
-- source map 支持需自行对接（chobitsu 有内置但需验证与 Remotr 现有 source 解析的集成）
+## 二、chobitsu 核实证据(v1.0 错误的来源)
 
-**Remotr 适用性**：✅ **最佳匹配**。你已经有 SDK 注入 + WebSocket 通道，chii 的职责和你的 server 重叠，可以直接**把 chobitsu 当成 Remotr SDK 的一个 plugin 集成**，复用现有 transport。
+chobitsu `src/domains/Debugger.ts` 的完整对外实现(2026-07-03 核实):
 
----
-
-### 3. 轻量级伪断点（logpoints）
-
-**工作原理**：
-- 用户在 Sources 面板点击行号 → 在该行动态注入 `console.log('🔵 Breakpoint hit', {变量A, 变量B})`
-- 或者用 `console.trace()` 打印调用栈
-- 不暂停执行，只输出日志到 Console 面板
-
-**优势**：
-- 实现极简（3天工作量）
-- 零运行时开销（只在命中时打一次日志）
-
-**劣势**：
-- 不是真断点（无法暂停、单步、修改变量）
-- 用户体验割裂（需要在 Console 和 Sources 间跳转）
-
-**Remotr 适用性**：⚠️ **备选**。如果你想快速验证 debug 需求强度，可以先做这个 MVP；但长期看，方案 A 的投入回报更高。
-
----
-
-## 推荐方案详解：集成 chobitsu 到 Remotr SDK
-
-### 架构设计
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  移动端浏览器 / 生产页面                                          │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │ <script src="remotr.js"></script>                          │ │
-│  │ ┌──────────────────────────────────────────────────────┐   │ │
-│  │ │ Remotr SDK (现有)                                     │   │ │
-│  │ │  • rrweb 录制                                         │   │ │
-│  │ │  • Console 拦截                                       │   │ │
-│  │ │  • Network 拦截                                       │   │ │
-│  │ │  • Sources fetch                                     │   │ │
-│  │ │  • WebSocket transport                               │   │ │
-│  │ │  ┌──────────────────────────────────────────┐        │   │ │
-│  │ │  │ **新增 Plugin: Debugger (chobitsu)**      │        │   │ │
-│  │ │  │  • 实现 Debugger.* / Runtime.* CDP域      │        │   │ │
-│  │ │  │  • 维护断点表、script 缓存                │        │   │ │
-│  │ │  │  • AST改写/Proxy拦截实现断点暂停          │        │   │ │
-│  │ │  │  • 复用 SDK 的 WebSocket 发送CDP消息      │        │   │ │
-│  │ │  └──────────────────────────────────────────┘        │   │ │
-│  │ └──────────────────────────────────────────────────────┘   │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                              ▲                                   │
-│                              │ WebSocket                         │
-│                              │ {type:'debugger', method:'...'}   │
-└──────────────────────────────┼───────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Remotr Server (Node.js)                                        │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 现有 Room WebSocket 中继                                  │   │
-│  │  • SDK → Debugger panel 的 CDP 消息透传                  │   │
-│  │  • 不需要单独的 chii server（直接复用现有架构）         │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Remotr Debugger 面板 (浏览器)                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ **新增 Panel: Debugger**                                  │   │
-│  │  • 左侧：脚本列表树（复用现有 SourcesPanel）             │   │
-│  │  • 中间：代码查看器 + 断点标记（点击行号 toggle）        │   │
-│  │  • 右侧：调用栈、Scope变量、Watch表达式                  │   │
-│  │  • 顶部工具栏：Continue/Pause/StepOver/StepInto/StepOut │   │
-│  │  • 发送 CDP 命令：Debugger.setBreakpointByUrl(...)      │   │
-│  │  • 监听 CDP 事件：Debugger.paused → 更新UI              │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 关键实现细节
-
-#### 1. SDK 端 (chobitsu 集成)
-
-**文件结构**：
-```
-packages/sdk/src/plugins/
-  debugger.ts         # Debugger plugin 主入口
-  debugger/
-    domains/
-      Debugger.ts     # Debugger domain 实现（断点、单步、暂停）
-      Runtime.ts      # Runtime domain 实现（eval、getProperties）
-    breakpoint-manager.ts   # 断点表、脚本缓存
-    pause-controller.ts     # 暂停机制（Promise-based）
-    source-rewriter.ts      # 可选：AST 改写插入断点检查点
-```
-
-**核心逻辑**（伪代码）：
 ```typescript
-// debugger.ts
-export function createDebuggerPlugin(transport: Transport) {
-  const breakpoints = new Map<string, Breakpoint[]>(); // url → breakpoints
-  const scripts = new Map<string, ScriptInfo>();
-  let pauseResolver: (() => void) | null = null;
-
-  // 监听脚本加载（与现有 Sources plugin 协作）
-  window.addEventListener('DOMContentLoaded', () => {
-    for (const script of document.scripts) {
-      const scriptId = randomId();
-      scripts.set(scriptId, { url: script.src, scriptId });
-      transport.send('debugger.scriptParsed', { scriptId, url: script.src });
-    }
-  });
-
-  // 处理来自面板的 CDP 命令
-  transport.onCommand('Debugger.setBreakpointByUrl', async (data) => {
-    const { url, lineNumber } = data;
-    const bp = { url, lineNumber, breakpointId: randomId() };
-    breakpoints.set(url, [...(breakpoints.get(url) || []), bp]);
-    return { breakpointId: bp.breakpointId, locations: [{ scriptId: '...', lineNumber }] };
-  });
-
-  transport.onCommand('Debugger.resume', () => {
-    if (pauseResolver) {
-      pauseResolver();
-      pauseResolver = null;
-    }
-  });
-
-  // 断点暂停机制（在 script 改写后被调用，或手动 debugger; 触发）
-  async function pauseExecution(scriptId: string, lineNumber: number) {
-    const callFrames = captureCallStack(); // Error.stack 解析
-    const scopeChain = captureScopeChain(); // 闭包变量枚举
-    transport.send('debugger.paused', { reason: 'other', callFrames, scopeChain });
-    await new Promise<void>(resolve => { pauseResolver = resolve; });
-  }
-
-  // 可选：动态注入检查点（或改写脚本）
-  // 实际 chobitsu 用 Proxy + Service Worker 或 inline rewrite
-}
+export function setProxy(params)              // 设置脚本代理
+export function enable()                      // 遍历脚本,trigger 'Debugger.scriptParsed'
+export async function getScriptSource(params) // 返回脚本源码
 ```
 
-**与现有架构集成点**：
-- 复用 `transport.ts` 的 WebSocket 通道（扩展消息类型：`type: 'debugger'`）
-- 复用 `sources.ts` 的脚本 fetch 和 source map 解析
-- 与 rrweb plugin 无冲突（各自监听不同事件）
+没有断点表、没有暂停机制、没有单步。chobitsu 对 CDP `Debugger` domain 的实现
+只够支撑 DevTools Sources 面板的**源码浏览**。v1.0 描述的"AST 改写插入检查点、
+Promise 暂停机制"在 chobitsu 中不存在,属于对该库能力的误判。
 
-#### 2. Server 端（透传 CDP 消息）
+## 三、方案 A:构建期插桩(vdebugger 路线)—— opt-in 真断点
 
-**改动量极小**——只需在 WebSocket 消息路由里加一条：
-```typescript
-// packages/server/src/room.ts
-if (msg.type === 'debugger') {
-  // 透传给同 room 的 debugger 面板（role=debugger）
-  this.broadcastToDebuggers(msg);
-}
+### 原理
+
+vdebugger 通过 AST 转换将业务代码改写为 generator 函数,在每个可断点位置插入
+`yield`。命中断点时 generator 挂起,栈帧与 scope 状态序列化后可查询;`resume` /
+单步通过控制 generator 的 `.next()` 实现。支持构建期预转换(`transform` API),
+避免运行期转换的性能损失。
+
+### 架构集成
+
+```
+业务构建(Vite/Webpack)
+  └─ @remotr/instrument 插件(新包,封装 vdebugger.transform)
+       ├─ 产出:插桩后代码 + 转换层 source map
+       └─ 运行期:vDebugger.debug(code) 接管执行
+
+Remotr SDK
+  └─ plugins/breakpoint.ts(新插件)
+       ├─ 桥接 vdebugger 运行时 API ↔ Remotr Envelope 协议
+       ├─ 命令:bp.set / bp.remove / bp.resume / bp.stepOver / bp.stepInto / bp.stepOut
+       └─ 事件:bp.paused(callFrames + scope 变量,SpyAtom 序列化)
+
+Server:零改动(room.ts 的 envelope 路由是方法无关透传)
+
+Debugger 面板
+  └─ Sources 面板扩展:断点槽(点击行号)、暂停态高亮、
+     Call Stack / Scope 树(复用 SpyAtom 渲染)、单步工具栏
 ```
 
-chobitsu 的职责已由 SDK 端承担，server 只做消息中继，无需跑 chii 独立进程。
+### 代价与风险
 
-#### 3. Debugger 面板 UI
+| 风险 | 说明 | 缓解 |
+|------|------|------|
+| 业务方必须改构建 | 与"一个 script 标签零配置"定位冲突 | 定位为 opt-in 高级功能,仅 dev/staging |
+| vdebugger 停止维护 | 最后提交 2024-11,issue 无人处理 | fork 进 Remotr 组织,自担维护 |
+| 性能开销 | generator 包装 + 状态序列化,包体积增大 | 仅插桩业务代码,排除 node_modules;生产构建剔除 |
+| 双层 source map | vdebugger 转换 map ∘ 应用构建 map 需要组合 | `@remotr/sourcemap` 已有解析基础,做链式解析 |
+| 转换正确性 | async/await、类字段等新语法边界 | **先 2-3 天 PoC**:真实 React 应用验证后再立项 |
 
-**新增标签页**：`Debugger`（与 Console/Elements/Network 并列）
+### 工程量:3-4 周(PoC 通过后)
 
-**UI 组件**（参考 Chrome DevTools Sources）：
-- **左侧栏**：脚本树（复用 `SourcesPanel.tsx` 的列表部分）
-- **中间**：代码查看器 + 行号 + 断点标记
-  - 点击行号 → 调用 `transport.send('Debugger.setBreakpointByUrl', { url, lineNumber })`
-  - 收到 `Debugger.paused` 事件 → 高亮当前执行行、显示调用栈
-- **右侧栏**：
-  - **Call Stack**：从 `callFrames` 渲染栈帧列表
-  - **Scope**：展开 local/closure/global 变量（类似现有 `SpyAtomView`）
-  - **Watch**：用户输入表达式 → `Runtime.evaluate`
-- **工具栏**：
-  ```
-  ▶️ Continue  | ⏯️ Pause | ⤵️ Step Over | ⤴️ Step Into | ⤴️ Step Out
-  ```
+- Week 1:`@remotr/instrument` 包 + fork vdebugger + 构建插件
+- Week 2:SDK `breakpoint.ts` 插件 + 协议桥接
+- Week 3:面板断点 UI(断点槽/暂停态/Scope 树/单步工具栏)
+- Week 4:双层 source map 组合、测试、文档
 
-**核心交互流程**：
-1. 用户在代码行 42 点击 → 发送 `Debugger.setBreakpointByUrl({ url: 'script.js', lineNumber: 42 })`
-2. SDK 返回 `{ breakpointId: 'bp_123' }`，UI 在行号处画红点
-3. 远程页面执行到第 42 行 → SDK 触发 `pauseExecution()` → 发送 `Debugger.paused` 事件
-4. 面板收到事件 → 更新 UI（高亮行、显示栈、变量）、禁用操作按钮
-5. 用户点 "Continue" → 发送 `Debugger.resume()`
-6. SDK 调用 `pauseResolver()` 继续执行
+## 四、方案 B:浏览器扩展(不推荐)
 
-#### 4. 断点暂停的实现方式（三选一）
+`chrome.debugger` API 可获得真 V8 断点,但:仅桌面 Chrome、需安装扩展、
+与注入式 SDK 是两种产品形态。等于放弃移动 H5/微信 webview 这一核心差异化场景,
+去和本地 DevTools 竞争。不建议投入。
 
-| 方式 | 优势 | 劣势 | 推荐度 |
-|------|------|------|--------|
-| **A. 原生 `debugger;` + DevTools 打开检测** | 实现简单 | 要求面板在"真 DevTools"打开时才工作，用户体验差 | ❌ |
-| **B. AST 改写脚本** | 精确控制每一行 | 需要拦截脚本加载（Service Worker 或 inline），工程量大 | ⚠️ |
-| **C. Function Proxy + 手动埋点** | 轻量、实用 | 需用户在调试的函数里手动加 `await __remotr_checkpoint()` | ✅ 适合 MVP |
+## 五、方案 C(推荐):无暂停调试套件
 
-**推荐 MVP 方案 C**（渐进式）：
-- 初期：在想调试的函数开头手动加 `await __remotr_checkpoint(line)`（SDK 导出的辅助函数）
-- 后期：提供 Babel/SWC plugin 自动注入（CI 构建时）
-- 终极：集成 Service Worker 拦截 + AST 改写（类似 chii 完整方案）
+打断点的真实动机绝大多数是:**"代码执行到这里了吗?此刻变量是什么值?"**
+这不需要暂停执行也能回答。结合 Remotr 已有的 rrweb 时间旅行、source map 还原、
+MCP AI 修复,以下两个能力可覆盖断点的绝大部分使用场景:
 
-### 工程量估算
+### 5.1 函数级 Tracepoint(5-7 天)
 
-| 阶段 | 任务 | 工时 | 依赖 |
-|------|------|------|------|
-| **Week 1** | SDK Debugger plugin 骨架 + 断点表 + 暂停 Promise | 3天 | - |
-| | Server 透传逻辑 | 0.5天 | - |
-| | 面板 Debugger UI 框架（脚本树、工具栏、栈视图） | 2天 | - |
-| **Week 2** | 完整 Debugger domain（stepOver/Into/Out、条件断点） | 3天 | Week 1 |
-| | Scope 变量枚举、Watch 表达式 | 2天 | Week 1 |
-| **Week 3** | Source map 集成（还原到原始源码） | 2天 | 现有 sources.ts |
-| | 测试、文档、示例 | 3天 | - |
+- **面板**:按对象路径设置追踪点(如 `app.store.dispatch`、
+  `MyService.prototype.fetchUser`),可附加条件表达式
+- **SDK**:新插件 `plugins/trace.ts`,按路径解析目标函数并用
+  `Object.defineProperty` 包装(storage 插件已验证的劫持技术),捕获:
+  - 入参 / 返回值 / 抛出的异常(SpyAtom 序列化,复用现有深度/截断策略)
+  - 调用栈(`Error.stack`,面板侧经 `@remotr/sourcemap` 还原到原始源码)
+  - 耗时(同步执行时间;返回 Promise 时追踪 settle 时间)
+  - 条件表达式仅命中时上报,等效 DevTools 条件 logpoint
+- **协议**:新增命令 `trace.set` / `trace.remove` / `trace.list`(Debugger → SDK,
+  带 id/replyTo),新增事件 `trace.hit`(SDK → Debugger)
+- **服务端:零改动**——`room.ts` 按 envelope 透传,方法无关
+- **面板展示**:`trace.hit` 流入 Console 面板(带专属图标/过滤器),
+  点击栈帧跳转 Sources 原始源码
 
-**总计**：2-3周（单人全职），可并行推进 SDK 和面板开发。
+### 5.2 Watch 表达式面板(2-3 天)
 
----
+- 复用现有远程 eval 命令通道
+- 面板侧维护表达式列表,定时(如 1s)或手动刷新求值
+- 结果以 SpyAtom 树渲染,变化高亮
 
-## 与 rrweb 的兼容性验证
+### 5.3 与既有能力的组合工作流
 
-**调研结论**：✅ **完全兼容**
-
-- **rrweb 只录制 DOM 副作用**（mutations、鼠标位置、样式变化），不干扰 JS 执行
-- **chobitsu 在 JS 执行层工作**（暂停、单步），不操作 DOM
-- 两者都是注入脚本，监听不同事件，互不干扰
-- 实测：多个远程调试工具的用户已在 rrweb 场景下部署 eruda + chii 联合使用
-
-**潜在冲突点**（已排除）：
-- ❓ 断点暂停时 rrweb 是否继续录制？
-  - ✅ 是。rrweb 用 `MutationObserver` 和 `requestAnimationFrame`，独立于 JS 暂停
-- ❓ 单步调试时 DOM 变化会被录下来吗？
-  - ✅ 会。用户在暂停时手动修改 DOM（Console 执行 `element.remove()`）也会被 rrweb 捕获
-
----
-
-## 备选方案对比
-
-### 方案 B：原生 CDP 代理
-
-**适用场景**：内部开发/测试环境，用户可配置浏览器
-
-**架构**：
-1. 用户启动 Chrome：`chrome --remote-debugging-port=9222`
-2. Remotr SDK 通过 `fetch('http://localhost:9222/json/list')` 发现目标
-3. SDK 建立到 `webSocketDebuggerUrl` 的 WebSocket，代理所有 CDP 消息到 Remotr server
-4. 面板直接发送标准 CDP 命令
-
-**优势**：真正的 V8 引擎断点，零开销
-
-**致命劣势**：
-- 移动端无法开 debug 端口
-- 生产环境不可用
-- 与 rrweb 录制冲突（CDP 会接管整个 page，rrweb 注入脚本可能被阻断）
-
-**工程量**：2周（比 chobitsu 简单，因为不用自己实现 Debugger domain）
-
-**推荐度**：⭐⭐ 仅适合企业内网、桌面浏览器场景。
-
-### 方案 C：轻量级 logpoints
-
-**实现**：
-- 用户点击行号 → 动态插入 `console.log`（通过 `Runtime.evaluate` 或脚本注入）
-- 不暂停，只打日志
-
-**代码示例**：
-```typescript
-// 面板点击行号 42
-transport.send('debugger.setLogpoint', { url: 'script.js', line: 42, expr: 'localVar' });
-
-// SDK 端
-transport.onCommand('debugger.setLogpoint', ({ url, line, expr }) => {
-  // 方式1：Runtime.evaluate 注入（需页面支持）
-  eval(`console.log('🔵 Line ${line}:', ${expr});`);
-  
-  // 方式2：AST 改写（更可靠）
-  rewriteScript(url, insertAt(line, `console.log('🔵 Line ${line}:', ${expr});`));
-});
+```
+rrweb 时间旅行     →  "当时页面长什么样"
+Tracepoint         →  "执行流走到哪、参数/返回值是什么"
+Watch 表达式       →  "这个状态现在是什么值"
+sourcemap 还原     →  "对应我源码的哪一行"
+MCP + Claude Code  →  "直接在真实仓库里修掉"
 ```
 
-**工程量**：3天
+这条链路与项目既定方向(AI 辅助修复不依赖断点)完全一致。
 
-**推荐度**：⭐⭐⭐ 作为方案 A 的 MVP 前置验证可行，但长期看体验不如真断点。
+### 工程量:~2 周
 
----
-
-## 推荐决策路径
-
-### 第 1 步：快速 MVP（1 周）
-实现**方案 C logpoints**，验证用户对"在 Sources 面板打断点"的需求强度：
-- 面板：点击行号 → 发消息给 SDK
-- SDK：插入 `console.log` → 输出到 Console 面板
-- 用户在 Console 里看到"伪断点"日志
-
-**评估标准**：如果用户反馈"有总比没有好，但还想要真暂停"，则进入第 2 步；如果觉得够用，就此打住。
-
-### 第 2 步：完整断点调试（2-3 周）
-实现**方案 A chobitsu**：
-- Week 1：基础框架（断点表、暂停 Promise、UI 骨架）
-- Week 2：完整 domain（单步、scope、watch）
-- Week 3：source map、测试、文档
-
-**里程碑验证**：
-- M1：能在一个简单页面设断点、暂停、看变量
-- M2：能单步调试、条件断点
-- M3：支持 source map 还原到 TS/React 源码
-
-### 第 3 步（可选）：自动化埋点
-如果手动加 `__remotr_checkpoint()` 太麻烦，提供：
-- Babel/SWC plugin 自动注入
-- Service Worker 拦截 + AST 改写（完全透明）
+| 任务 | 工时 |
+|------|------|
+| SDK `trace.ts` 插件 + 协议 | 4 天 |
+| 面板 Tracepoint 管理 UI + Console 集成 | 3 天 |
+| Watch 表达式面板 | 2-3 天 |
+| 测试(SDK 单测 + 面板交互)+ 文档 | 2 天 |
 
 ---
 
-## 风险与缓解
+## 六、决策路径
 
-| 风险 | 影响 | 概率 | 缓解措施 |
-|------|------|------|---------|
-| chobitsu 暂停机制被恶意代码绕过 | 中 | 低 | 在调试场景非安全威胁；生产禁用 debugger plugin |
-| 断点改写性能开销 | 低 | 中 | 只改写有断点的脚本；用 WeakMap 缓存改写结果 |
-| Source map 解析失败 | 中 | 中 | 降级到 minified 代码；提示用户检查 map 部署 |
-| 与第三方脚本冲突（如 Sentry） | 低 | 低 | 隔离 debugger 上下文；测试常见库 |
-
----
-
-## 总结与建议
-
-1. **技术可行**：方案 A (chii+chobitsu) 在架构上与 Remotr 完美契合，工程量可控（2-3周）
-2. **优先级判断**：先做 logpoints MVP（1周）验证需求，用户反馈强烈再上完整断点
-3. **长期价值**：完整 debugger 能力是 Remotr 区别于 eruda/vConsole 的核心竞争力——它们只能看日志，你能打断点调试
-4. **风险可控**：主要风险是工程量估算偏乐观；建议留 20% buffer
-
-**下一步行动**：
-- [ ] 决策：做 logpoints MVP，还是直接上完整方案？
-- [ ] 如果做完整方案，我可以给出详细的实现 PR 计划（分 10 个小 PR，每个可独立 review）
-- [ ] 需要我先做一个 PoC demo 吗？（用 chobitsu 跑一个最小化例子，验证暂停机制）
+1. **立即可做**:方案 C(~2 周)。零侵入、全场景可用、强化现有 AI 修复闭环。
+2. **需求验证后**:若用户明确反馈"需要真暂停/单步",先做 vdebugger PoC(2-3 天),
+   验证转换正确性与开销,通过后立项方案 A(3-4 周,opt-in)。
+3. **不做**:方案 B(扩展路线)、以及任何基于 chobitsu 的断点方案(能力不存在)。
 
 ---
 
 ## 参考资料
 
-### 调研来源
-- [Chrome DevTools Protocol 官方文档](https://chromedevtools.github.io/devtools-protocol/)
-- [chobitsu GitHub](https://github.com/liriliri/chobitsu) - 纯 JS CDP 实现
-- [chii GitHub](https://github.com/liriliri/chii) - 远程调试服务器
-- [rrweb 与调试工具兼容性讨论](https://github.com/rrweb-io/rrweb/issues)
+- [chobitsu Debugger domain 源码](https://github.com/liriliri/chobitsu/blob/master/src/domains/Debugger.ts) — 核实无断点实现
+- [chii 文档](https://chii.liriliri.io/) — DevTools frontend 远程接入(仅源码查看)
+- [vdebugger (wechatjs)](https://github.com/wechatjs/vdebugger) — generator 转换真暂停;最后维护 2024-11
+- [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/) — 原生 CDP 参考
 
-### 相关项目
-- **Replay.io**：时间旅行调试，真正的引擎录制（商业闭源，需特殊浏览器）
-- **weinre**：早期远程调试工具（已过时，不支持断点）
-- **eruda**：移动端 console（无远程调试）
-
-此文档版本：v1.0 (2026-06-18)
-作者：Claude (Remotr 架构分析)
+此文档版本:v2.0 (2026-07-03) — 更正 v1.0 关于 chobitsu 断点能力的错误结论
+作者:Claude (Remotr 架构分析)

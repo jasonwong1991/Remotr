@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Remotr React Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px;
+      color: #222;
+      background: #f7f8fa;
+    }
+    h1 { color: #61dafb; text-shadow: 0 1px 1px rgba(0,0,0,.15); }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 20px;
+      margin: 16px 0;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    button {
+      background: #087ea4;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 4px;
+      font-size: 14px;
+    }
+    button:hover { background: #066a8c; }
+    input {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      margin: 4px;
+      width: 200px;
+    }
+    #count { font-size: 32px; font-weight: bold; color: #087ea4; }
+    .todo-list { list-style: none; padding: 0; }
+    .todo-item {
+      padding: 8px 12px;
+      margin: 4px 0;
+      background: #f0f4f8;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .todo-item.done { opacity: 0.6; text-decoration: line-through; }
+  </style>
+</head>
+<body>
+  <h1>⚛️ Remotr React Demo</h1>
+  <p>Elements 面板选中下方任意元素 → Component 子页应显示所属组件、props 与 hooks state。</p>
+  <div id="root"></div>
+
+  <!-- React 18 UMD development 版:组件名不压缩,fiber 上名字清晰 -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script>
+    const e = React.createElement;
+    const { useState } = React;
+
+    // 叶子组件:props(todo/onToggle)+ 自有 hooks state(hover)
+    function TodoItem({ todo, onToggle }) {
+      const [hover, setHover] = useState(false);
+      return e(
+        'li',
+        {
+          className: 'todo-item' + (todo.done ? ' done' : ''),
+          onMouseEnter: () => setHover(true),
+          onMouseLeave: () => setHover(false),
+          onClick: () => onToggle(todo.id),
+        },
+        (todo.done ? '✅ ' : '⬜ ') + todo.text + (hover ? ' ←' : ''),
+      );
+    }
+
+    // 中间组件:纯 props 传递(验证祖先链 App > TodoList > TodoItem)
+    function TodoList({ todos, onToggle }) {
+      return e(
+        'ul',
+        { className: 'todo-list' },
+        todos.map((t) => e(TodoItem, { key: t.id, todo: t, onToggle })),
+      );
+    }
+
+    // 独立组件:useState 计数器(验证 hooks state 提取)
+    function Counter() {
+      const [count, setCount] = useState(0);
+      return e(
+        'div',
+        { className: 'card' },
+        e('h3', null, 'Counter (hooks state)'),
+        e('div', { id: 'count' }, String(count)),
+        e('button', { onClick: () => setCount((c) => c + 1) }, '+1'),
+      );
+    }
+
+    // 根组件:多个 useState + 组合子组件
+    function App() {
+      const [todos, setTodos] = useState([
+        { id: 1, text: '注入 SDK', done: true },
+        { id: 2, text: '选中元素看组件', done: false },
+      ]);
+      const [input, setInput] = useState('');
+      const onToggle = (id) =>
+        setTodos((ts) => ts.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+      const addTodo = () => {
+        if (!input) return;
+        setTodos((ts) => [...ts, { id: Date.now(), text: input, done: false }]);
+        setInput('');
+      };
+      return e(
+        'div',
+        null,
+        e(Counter),
+        e(
+          'div',
+          { className: 'card' },
+          e('h3', null, 'TodoList (props + state)'),
+          e('input', {
+            value: input,
+            placeholder: 'new todo...',
+            onChange: (ev) => setInput(ev.target.value),
+          }),
+          e('button', { onClick: addTodo }, 'Add'),
+          e(TodoList, { todos, onToggle }),
+        ),
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+  </script>
+
+  <!-- Inject Remotr SDK: replace with your server address -->
+  <script src="http://localhost:9777/remotr.js" data-room="default"></script>
+</body>
+</html>

@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { decodeFrame } from '@remotr/shared';
+import { decodeFrame, KNOWN_METHODS, type MethodName } from '@remotr/shared';
 import { RoomRegistry } from './room.js';
 import { RecordingManager, loadRecordingConfig, type RecordingConfig } from './recording.js';
 
@@ -114,16 +114,11 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
           return;
         }
 
-        // Validate known methods
-        const validMethods = [
-          'system.info', 'console.entry', 'network.request', 'network.requestBody',
-          'network.response', 'network.responseBody', 'storage.set', 'storage.delete',
-          'storage.clear', 'dom.rrweb', 'elements.picked', 'eval.run', 'page.error',
-          'page.reload', 'sources.list', 'sources.fetch'
-        ];
-
-        const methodPrefix = frame.envelope.method.split('.')[0];
-        if (!validMethods.some(m => m.startsWith(methodPrefix))) {
+        // Validate known methods against the shared protocol registry.
+        // Unknown methods are logged but still forwarded (forward-compat with
+        // newer SDK/panel builds); the registry keeps this in sync with the
+        // protocol so legitimate methods don't spam warnings.
+        if (!KNOWN_METHODS.has(frame.envelope.method as MethodName)) {
           console.warn(`[Security] Unknown method '${frame.envelope.method}' from ${member.role}`);
           // Don't return - allow forward compatibility with new methods
         }

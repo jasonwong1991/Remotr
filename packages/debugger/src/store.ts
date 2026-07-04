@@ -12,6 +12,8 @@ import type {
   BoxModel,
   ComputedStyles,
   MatchedRule,
+  TraceHitEvent,
+  TracepointDef,
 } from '@remotr/shared';
 
 export type ConnStatus = 'connecting' | 'connected' | 'disconnected';
@@ -30,6 +32,13 @@ export interface ConsoleRecord {
   entry?: ConsoleEvent;
   pageError?: PageErrorEvent;
   evalResult?: { code: string; atom: import('@remotr/shared').SpyAtom };
+  timestamp: number;
+}
+
+/** 一次函数追踪点命中(来自 SDK 的 trace.hit 事件 + 面板本地时间戳/自增 id) */
+export interface TraceHitRecord {
+  id: string;
+  hit: TraceHitEvent;
   timestamp: number;
 }
 
@@ -66,6 +75,9 @@ interface DebuggerState {
   connStatus: ConnStatus;
   systemInfo: SystemInfoEvent | null;
   consoleRecords: ConsoleRecord[];
+  traceHits: TraceHitRecord[];
+  /** 当前活跃的追踪点(乐观维护:set 成功即加入,remove 即删除) */
+  tracepoints: TracepointDef[];
   networkMap: Map<string, NetworkRecord>;
   storage: StorageState;
   rrwebEvents: RrwebEventRaw[];
@@ -87,6 +99,10 @@ interface DebuggerState {
   addPageError: (err: PageErrorEvent, ts: number) => void;
   addEvalResult: (code: string, atom: import('@remotr/shared').SpyAtom, ts: number) => void;
   clearConsole: () => void;
+  addTraceHit: (hit: TraceHitEvent, ts: number) => void;
+  clearTrace: () => void;
+  addTracepoint: (tp: TracepointDef) => void;
+  removeTracepoint: (id: string) => void;
   addNetworkRequest: (req: NetworkRequestEvent) => void;
   addNetworkResponse: (res: NetworkResponseEvent) => void;
   addNetworkError: (err: NetworkErrorEvent) => void;
@@ -125,6 +141,8 @@ export const useStore = create<DebuggerState>((set) => ({
   connStatus: 'connecting',
   systemInfo: null,
   consoleRecords: [],
+  traceHits: [],
+  tracepoints: [],
   networkMap: new Map(),
   storage: { local: {}, session: {}, cookie: {} },
   rrwebEvents: [],
@@ -164,6 +182,25 @@ export const useStore = create<DebuggerState>((set) => ({
       ],
     })),
   clearConsole: () => set({ consoleRecords: [] }),
+
+  addTraceHit: (hit, ts) =>
+    set((s) => {
+      // 高频调用可能海量涌入,封顶 500 条,超出丢弃最旧的(与 network backlog 同策略)
+      const next = [
+        ...s.traceHits,
+        { id: nextId(), hit, timestamp: ts },
+      ];
+      if (next.length > 500) next.splice(0, next.length - 500);
+      return { traceHits: next };
+    }),
+  clearTrace: () => set({ traceHits: [] }),
+
+  addTracepoint: (tp) =>
+    set((s) => (s.tracepoints.some((t) => t.id === tp.id)
+      ? s
+      : { tracepoints: [...s.tracepoints, tp] })),
+  removeTracepoint: (id) =>
+    set((s) => ({ tracepoints: s.tracepoints.filter((t) => t.id !== id) })),
 
   addNetworkRequest: (req) =>
     set((s) => {
@@ -243,6 +280,8 @@ export const useStore = create<DebuggerState>((set) => ({
       connStatus: 'connecting',
       systemInfo: null,
       consoleRecords: [],
+      traceHits: [],
+      tracepoints: [],
       networkMap: new Map(),
       storage: { local: {}, session: {}, cookie: {} },
       rrwebEvents: [],
@@ -261,6 +300,8 @@ export const useStore = create<DebuggerState>((set) => ({
       // Keep connStatus
       systemInfo: null,
       consoleRecords: [],
+      traceHits: [],
+      tracepoints: [],
       networkMap: new Map(),
       storage: { local: {}, session: {}, cookie: {} },
       rrwebEvents: [],
