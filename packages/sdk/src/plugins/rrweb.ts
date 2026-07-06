@@ -1,5 +1,5 @@
 import { record } from 'rrweb';
-import type { recordOptions } from 'rrweb';
+import type { recordOptions, eventWithTime } from 'rrweb';
 import type { Transport } from '../transport.js';
 
 /**
@@ -26,7 +26,7 @@ export function getMirror(): any | null {
  */
 export function installRrweb(transport: Transport): void {
   try {
-    const options: recordOptions = {
+    const options: recordOptions<eventWithTime> = {
       emit(event, isCheckout) {
         try {
           transport.send('dom.rrweb', { event, isCheckout });
@@ -40,7 +40,7 @@ export function installRrweb(transport: Transport): void {
         // 滚动事件也保持节流，避免连续滚动期间产生大量增量事件。
         scroll: 150,
         // 输入框变更不要只发最后一次，减少 debugger 修改 value/className/style 等联动时的感知延迟。
-        input: true,
+        input: 'all',
       },
       // 每 20s 强制一次全量快照，作为新调试端的重建基线。
       checkoutEveryNms: 20_000,

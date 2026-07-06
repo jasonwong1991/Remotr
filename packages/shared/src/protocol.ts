@@ -307,6 +307,20 @@ export interface ElementsPickedEvent {
   nodeId: number;
 }
 
+/** 按 rrweb ID 查询元素基本信息 */
+export interface ElementResolveCmd {
+  rrwebId: number;
+}
+/** 将 CSS 选择器命中的元素登记到指定 rrweb ID */
+export interface ElementRegisterCmd {
+  selector: string;
+  rrwebId: number;
+}
+/** 检查 rrweb ID 对应元素是否仍在文档中 */
+export interface ElementIsAttachedCmd {
+  rrwebId: number;
+}
+
 export interface ElementsDeleteNodeCmd {
   nodeId: number;
 }
@@ -497,6 +511,9 @@ export interface MethodData {
   'elements.setHTML': ElementsSetHTMLCmd;
   'elements.scrollIntoView': ElementsScrollIntoViewCmd;
   'elements.setForcedStates': ElementsSetForcedStatesCmd;
+  'element.resolve': ElementResolveCmd;
+  'element.register': ElementRegisterCmd;
+  'element.isAttached': ElementIsAttachedCmd;
   'sources.list': SourcesListCmd;
   'sources.fetch': SourcesFetchCmd;
   'elements.picked': ElementsPickedEvent;
@@ -537,6 +554,9 @@ export type CommandMethod =
   | 'elements.setHTML'
   | 'elements.scrollIntoView'
   | 'elements.setForcedStates'
+  | 'element.resolve'
+  | 'element.register'
+  | 'element.isAttached'
   | 'sources.list'
   | 'sources.fetch'
   | 'trace.set'
@@ -584,6 +604,9 @@ export const KNOWN_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'elements.setHTML',
   'elements.scrollIntoView',
   'elements.setForcedStates',
+  'element.resolve',
+  'element.register',
+  'element.isAttached',
   'sources.list',
   'sources.fetch',
 ]);

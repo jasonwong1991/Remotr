@@ -8,7 +8,13 @@ await build({
   format: 'iife',
   globalName: 'REMOTR',
   outfile: 'dist/remotr.js',
-  target: ['es2019'],
+  // Android 8 出厂 WebView ≈ Chrome 58~61：不支持 ES2019 的 catch{}（需 66）
+  // 和 globalThis（需 71）。target 降到 es2017（Chrome 58 已支持 async/await），
+  // 并用 banner 注入 globalThis polyfill（rrweb 依赖）。
+  target: ['es2017'],
+  banner: {
+    js: 'window.globalThis||(window.globalThis=window);',
+  },
   minify: true,
   sourcemap: false,
   legalComments: 'none',
