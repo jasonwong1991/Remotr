@@ -10,13 +10,15 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 
 - 🖥️ **Page Mirror** — Built on [rrweb](https://github.com/rrweb-io/rrweb) for real-time recording and replay, faithfully reconstructing the remote page (styles, DOM incremental updates); **manual zoom** (25%–200%) with auto-centering
 - 🎮 **Console** — Intercepts `console.*` + global errors/Promise rejections; supports **executing arbitrary JS** remotely (eval)
-- 🌐 **Network** — Intercepts `fetch` / `XHR` / `sendBeacon`, displaying URL/status/timing/headers/body
+- 🌐 **Network** — Intercepts `fetch` / `XHR` / `sendBeacon`, displaying URL/status/timing/headers/body. **WebSocket & SSE (EventSource) inspection** — every connection with its frame log (direction, size, payload preview). **Copy-as-cURL**, **HAR 1.2 export**, and resource-type filtering.
+- 📈 **Performance** — Core Web Vitals (FCP / LCP / CLS / TTFB with good/needs-improvement/poor rating), long-task list, and live JS-heap + FPS sparklines. Built on `PerformanceObserver`, fully feature-detected for old WebViews.
 - 🧬 **Elements** — Live DOM tree rebuilt from the rrweb mirror (hide/delete/edit reflect instantly); DevTools-style right-click menu: copy selector/XPath/JS-path/outerHTML, force pseudo-states (`:hover`/`:focus`/…), hide/edit-HTML/delete, scroll into view; inspect & edit matched rules, computed styles, and box model; element picker
 - ⚛️ **Component Inspection (React / Vue)** — Select any element in the mirror and the Elements panel's **Component** sub-tab shows the owning framework component: name, framework badge, ancestor chain, **props** and **state** (React hooks / class state, Vue 3 setup/data, Vue 2 `$data`). Reads the same DOM-attached fibers/instances React & Vue DevTools use — no app-side setup, per-element detection so mixed-framework pages work.
 - 🎯 **Function Tracepoints** — Trace any globally-reachable function by dotted path (e.g. `app.store.dispatch`) without pausing execution. Each call reports **arguments / return value / thrown error / call stack / duration**, serialized just like console objects. Optional condition expression (referencing `args` / `ret`) filters noisy call sites — a no-pause alternative to breakpoints for injected debugging.
 - 💾 **Storage** — View, edit, and delete localStorage / sessionStorage / Cookies (bidirectional)
 - 🗺️ **Sources & Source Maps** — Browse the page's scripts; the SDK fetches scripts and `.map` files same-origin (bypassing panel CORS) and resolves minified stacks back to original `src/Foo.tsx:42` with a code snippet. Console errors get a "resolve source" button that jumps straight to the original line.
-- 🤖 **AI-Assisted Fixing (MCP)** — A built-in MCP server exposes live errors, source-map-resolved stacks, and console/network context to **Claude Code**. One "Copy for AI fix" button in the session view hands Claude everything it needs to locate and fix the error in your real repo. Graceful degradation: works without source maps too (resolves to minified position + full context).
+- 🤖 **AI-Assisted Debugging (MCP)** — A built-in MCP server lets **Claude Code** both **read and drive** a live session. Read-side: live errors, source-map-resolved stacks, console/network context. **Act-side: `remotr_run_eval`** (execute JS in the page), **`remotr_set_tracepoint` / `remotr_get_tracepoint_hits`** (place no-pause breakpoints and read hits), and **`remotr_diagnose`** (one call → error + resolved stack + snippet + console/network timeline + suggested cause). One "Copy for AI fix" button hands Claude everything it needs. Graceful degradation: works without source maps too.
+- 🧯 **Pre-connect Error Buffer** — A capped ring buffer captures `window.onerror` / unhandled rejections / `console.error` from SDK init onward and flushes them on first connect, so boot-time crashes that happen *before* the socket opens aren't lost.
 - 🔌 **Zero-config Injection** — One `<script>` tag, auto-connects with exponential backoff reconnection
 - 📦 **Single-file SDK** — Built as a single IIFE with esbuild (~60KB gzipped, includes rrweb), no dependencies needed on target page
 - 🔀 **Multi-Device/Multi-Page** — Each device and browser tab is tracked separately with persistent device IDs (localStorage) and deterministic page IDs (URL fingerprint + concurrent-tab slots, so reopening the same page resumes the same session). Perfect for debugging multiple users or testing across devices.
@@ -367,6 +369,12 @@ Add the MCP server to your project's `.mcp.json` (or Claude Code MCP config):
 | `remotr_get_errors` | Recent errors for a session (uncaught errors, unhandled rejections, console.error) with raw stacks. |
 | `remotr_resolve_error` | Resolve one error's stack to original `file:line` + code snippet per frame via source maps. |
 | `remotr_get_context` | Full diagnostic bundle: system info, the error, resolved frames + snippets, recent console timeline, failed network requests. |
+| `remotr_diagnose` | One-shot triage: latest (or Nth) error + source-map-resolved top frame + snippet + recent console/network timeline + a heuristic suggested cause. |
+| `remotr_run_eval` | Execute an arbitrary JS expression in the target page and return the serialized result (the AI's "act" primitive). |
+| `remotr_set_tracepoint` | Place a no-pause tracepoint on a dotted function path (optional condition) — AI-driven breakpoint placement. |
+| `remotr_get_tracepoint_hits` | Read recent tracepoint hits (args / return / thrown / stack / duration), capped and filterable by tracepoint id. |
+
+All tool outputs are size-capped (~50KB, snippets trimmed, compact JSON) with a `truncated` marker so they never blow an agent's context. `run_eval` / `set_tracepoint` are intentional "act" primitives — Remotr is the only webpage debugger an AI agent can both **read and drive**.
 
 A session is identified by the **(deviceId, pageId) pair** — `pageId` is derived deterministically from the URL, `deviceId` distinguishes browsers/devices.
 

@@ -10,11 +10,13 @@
 
 - 🖥️ **页面镜像** — 基于 [rrweb](https://github.com/rrweb-io/rrweb) 实现实时录制和回放，忠实重建远程页面（样式、DOM 增量更新）；支持**手动缩放**(25%–200%)并自动居中
 - 🎮 **控制台** — 拦截 `console.*` + 全局错误/Promise 拒绝；支持**远程执行任意 JS**（eval）
-- 🌐 **网络** — 拦截 `fetch` / `XHR` / `sendBeacon`，显示 URL/状态/时序/请求头/响应体
+- 🌐 **网络** — 拦截 `fetch` / `XHR` / `sendBeacon`，显示 URL/状态/时序/请求头/响应体。**WebSocket 与 SSE (EventSource) 抓包** — 每条连接及其帧日志（方向、大小、载荷预览）。支持**复制为 cURL**、**导出 HAR 1.2**、以及按资源类型过滤。
+- 📈 **性能** — 核心 Web Vitals（FCP / LCP / CLS / TTFB，带 good/needs-improvement/poor 评级）、长任务列表，以及实时 JS 堆内存 + FPS 迷你折线图。基于 `PerformanceObserver`，对老旧 WebView 全量特性检测。
 - 🧬 **元素** — 从 rrweb 镜像实时重建 DOM 树（隐藏/删除/编辑即时反映）；DevTools 风格右键菜单：复制 selector/XPath/JS-path/outerHTML，强制伪类（`:hover`/`:focus`/…），隐藏/编辑 HTML/删除，滚动到视图；查看并编辑匹配规则、计算样式、盒模型；元素拾取器
 - 💾 **存储** — 查看、编辑和删除 localStorage / sessionStorage / Cookies（双向）
 - 🗺️ **源码与 Source Map** — 浏览页面加载的脚本；由同源的 SDK 代取脚本与 `.map` 文件（绕开面板跨域），把压缩堆栈还原为原始 `src/Foo.tsx:42` 并附带源码片段。控制台报错带「还原源码」按钮，一键跳转到原始代码行。
-- 🤖 **AI 辅助修复（MCP）** — 内置 MCP 服务器把实时报错、Source Map 还原后的堆栈、console/network 上下文暴露给 **Claude Code**。会话视图里一个「复制给 AI 修复」按钮，把 Claude 定位并修复所需的一切交给它，直接改你真实仓库的源码。优雅降级：没有 Source Map 也能用（还原为压缩位置 + 完整上下文）。
+- 🤖 **AI 辅助调试（MCP）** — 内置 MCP 服务器让 **Claude Code** 既能**读取**也能**驱动**实时会话。读取侧：实时报错、Source Map 还原堆栈、console/network 上下文。**操作侧：`remotr_run_eval`**（在页面中执行 JS）、**`remotr_set_tracepoint` / `remotr_get_tracepoint_hits`**（下无暂停埋点并读取命中）、以及 **`remotr_diagnose`**（一次调用 → 报错 + 还原堆栈 + 片段 + console/network 时间线 + 推断原因）。会话视图里一个「复制给 AI 修复」按钮把所需一切交给 Claude。优雅降级：没有 Source Map 也能用。
+- 🧯 **预连接错误缓冲** — 一个封顶的环形缓冲从 SDK 初始化起就捕获 `window.onerror` / 未处理 Promise 拒绝 / `console.error`，并在首次连接时刷出，因此在 socket 打开*之前*发生的启动崩溃也不会丢失。
 - 🔌 **零配置注入** — 一个 `<script>` 标签，自动连接，支持指数退避重连
 - 📦 **单文件 SDK** — 使用 esbuild 构建为单个 IIFE（gzip 后约 60KB，包含 rrweb），目标页面无需依赖
 - 🔀 **多设备/多页面** — 每个设备和浏览器标签页都单独跟踪，使用持久化的设备 ID（localStorage）和确定性的页面 ID（URL 指纹 + 并发标签页 slot，重新打开同一页面即恢复同一 session）。非常适合调试多用户或跨设备测试。
@@ -349,6 +351,12 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 | `remotr_get_errors` | 某会话的近期报错（未捕获错误、未处理 Promise 拒绝、console.error），带原始堆栈。 |
 | `remotr_resolve_error` | 通过 Source Map 把某条报错的堆栈逐帧还原为原始 `file:line` + 源码片段。 |
 | `remotr_get_context` | 完整诊断包：系统信息、报错、还原后的栈帧 + 片段、近期 console 时间线、失败的网络请求。 |
+| `remotr_diagnose` | 一键分诊：最近（或第 N 条）报错 + Source Map 还原的顶帧 + 片段 + 近期 console/network 时间线 + 启发式推断原因。 |
+| `remotr_run_eval` | 在目标页面执行任意 JS 表达式并返回序列化结果（AI 的「操作」原语）。 |
+| `remotr_set_tracepoint` | 在点分函数路径上下无暂停埋点（可带条件表达式）——AI 驱动的断点放置。 |
+| `remotr_get_tracepoint_hits` | 读取近期埋点命中（参数 / 返回值 / 抛错 / 堆栈 / 耗时），封顶且可按埋点 id 过滤。 |
+
+所有工具输出均有大小上限（约 50KB、片段截断、紧凑 JSON）并带 `truncated` 标记，绝不撑爆 agent 上下文。`run_eval` / `set_tracepoint` 是有意保留的「操作」原语——Remotr 是唯一能被 AI **读取并驱动**的网页调试器。
 
 一个会话由 **(deviceId, pageId) 组合**唯一标识——`pageId` 由 URL 确定性派生，`deviceId` 区分不同浏览器/设备。
 
