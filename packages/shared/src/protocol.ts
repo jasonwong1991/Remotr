@@ -125,6 +125,86 @@ export interface NetworkErrorEvent {
   errorType?: 'network' | 'cors' | 'timeout' | 'abort' | 'unknown';
 }
 
+// ─────────────────────────────────────────────────────────
+// WebSocket / SSE 流量采集（长连接，帧级事件）
+// ─────────────────────────────────────────────────────────
+
+/** WebSocket 连接建立（SDK 侧构造 WebSocket 时上报，此刻可能仍在 CONNECTING） */
+export interface WsOpenEvent {
+  connectionId: string;
+  url: string;
+  /** 构造时传入的子协议（归一为数组） */
+  protocols?: string[];
+  timestamp: number;
+}
+
+/**
+ * WebSocket 帧（send 与 message 共用）。
+ * data 已截断至上限；二进制帧（ArrayBuffer/Blob/TypedArray）以占位描述替代原始字节。
+ */
+export interface WsFrameEvent {
+  connectionId: string;
+  /** 文本内容或二进制占位描述（如 "[ArrayBuffer 1024 bytes]"） */
+  data: string;
+  /** 原始负载字节/字符数（截断前） */
+  size: number;
+  /** data 因超过上限被截断时为 true */
+  truncated?: boolean;
+  /** 是否为二进制帧 */
+  binary?: boolean;
+  timestamp: number;
+}
+
+export interface WsCloseEvent {
+  connectionId: string;
+  code?: number;
+  reason?: string;
+  /** 是否为正常关闭（CloseEvent.wasClean） */
+  wasClean?: boolean;
+  timestamp: number;
+}
+
+export interface WsErrorEvent {
+  connectionId: string;
+  /** 错误说明（WebSocket error 事件不携带细节，通常为空） */
+  message?: string;
+  timestamp: number;
+}
+
+/** EventSource(SSE) 连接建立 */
+export interface SseOpenEvent {
+  connectionId: string;
+  url: string;
+  withCredentials?: boolean;
+  timestamp: number;
+}
+
+/** 一条 SSE 消息（默认 "message" 或具名事件） */
+export interface SseMessageEvent {
+  connectionId: string;
+  /** 事件类型；未命名事件为 "message" */
+  event: string;
+  data: string;
+  size: number;
+  truncated?: boolean;
+  /** 服务端下发的 lastEventId（如有） */
+  lastEventId?: string;
+  timestamp: number;
+}
+
+export interface SseErrorEvent {
+  connectionId: string;
+  /** EventSource.readyState（0=CONNECTING,1=OPEN,2=CLOSED） */
+  readyState?: number;
+  timestamp: number;
+}
+
+/** 应用主动调用 EventSource.close() 时上报（SSE 无 close 事件） */
+export interface SseCloseEvent {
+  connectionId: string;
+  timestamp: number;
+}
+
 export type StorageType = 'local' | 'session' | 'cookie';
 
 export interface StorageSnapshotEvent {
@@ -473,6 +553,49 @@ export interface FrameworkInspectResult {
 }
 
 // ─────────────────────────────────────────────────────────
+// Performance(Web Vitals / 长任务 / JS 堆 / FPS,SDK → 调试端,采样上报)
+// ─────────────────────────────────────────────────────────
+
+/** Web Vital 指标名 */
+export type WebVitalName = 'FCP' | 'LCP' | 'CLS' | 'TTFB';
+
+/** Web Vital 分级(Google 阈值):良好 / 待改进 / 较差 */
+export type WebVitalRating = 'good' | 'needs-improvement' | 'poor';
+
+/**
+ * 一次 Web Vital 采样。value 单位:FCP/LCP/TTFB 为毫秒,CLS 为无量纲累计位移分数。
+ * LCP/CLS 会随页面演进多次上报(保留最新);FCP/TTFB 通常仅一次。
+ */
+export interface PerfVitalEvent {
+  name: WebVitalName;
+  value: number;
+  /** 依据 Google 阈值预分级(面板据此着色);SDK 无法判定时可留空 */
+  rating?: WebVitalRating;
+}
+
+/** 一段长任务(longtask entryType,阻塞主线程 ≥50ms) */
+export interface PerfLongtaskEvent {
+  /** 相对 timeOrigin 的起始时间(毫秒) */
+  startTime: number;
+  /** 持续时间(毫秒) */
+  duration: number;
+}
+
+/** 一次 JS 堆内存采样(performance.memory,仅 Chromium 系可用) */
+export interface PerfMemoryEvent {
+  usedJSHeapSize: number;
+  totalJSHeapSize: number;
+  jsHeapSizeLimit: number;
+  timestamp: number;
+}
+
+/** 一次帧率采样(requestAnimationFrame 计数估算) */
+export interface PerfFpsEvent {
+  value: number;
+  timestamp: number;
+}
+
+// ─────────────────────────────────────────────────────────
 // 方法名 → 数据类型 映射表（单一事实来源，DRY）
 // ─────────────────────────────────────────────────────────
 
@@ -482,12 +605,25 @@ export interface MethodData {
   'network.request': NetworkRequestEvent;
   'network.response': NetworkResponseEvent;
   'network.error': NetworkErrorEvent;
+  'network.ws.open': WsOpenEvent;
+  'network.ws.send': WsFrameEvent;
+  'network.ws.message': WsFrameEvent;
+  'network.ws.close': WsCloseEvent;
+  'network.ws.error': WsErrorEvent;
+  'network.sse.open': SseOpenEvent;
+  'network.sse.message': SseMessageEvent;
+  'network.sse.error': SseErrorEvent;
+  'network.sse.close': SseCloseEvent;
   'storage.snapshot': StorageSnapshotEvent;
   'storage.change': StorageChangeEvent;
   'system.info': SystemInfoEvent;
   'page.error': PageErrorEvent;
   'dom.rrweb': DomRrwebEvent;
   'trace.hit': TraceHitEvent;
+  'perf.vital': PerfVitalEvent;
+  'perf.longtask': PerfLongtaskEvent;
+  'perf.memory': PerfMemoryEvent;
+  'perf.fps': PerfFpsEvent;
   // Dashboard 事件 (Server → debugger)
   'dashboard.sessions': DashboardSessionsEvent;
   // 命令 (debugger → SDK)
@@ -527,12 +663,25 @@ export type EventMethod =
   | 'network.request'
   | 'network.response'
   | 'network.error'
+  | 'network.ws.open'
+  | 'network.ws.send'
+  | 'network.ws.message'
+  | 'network.ws.close'
+  | 'network.ws.error'
+  | 'network.sse.open'
+  | 'network.sse.message'
+  | 'network.sse.error'
+  | 'network.sse.close'
   | 'storage.snapshot'
   | 'storage.change'
   | 'system.info'
   | 'page.error'
   | 'dom.rrweb'
   | 'trace.hit'
+  | 'perf.vital'
+  | 'perf.longtask'
+  | 'perf.memory'
+  | 'perf.fps'
   | 'elements.picked';
 
 /** 调试端 → SDK 的命令方法名 */
@@ -574,12 +723,25 @@ export const KNOWN_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'network.request',
   'network.response',
   'network.error',
+  'network.ws.open',
+  'network.ws.send',
+  'network.ws.message',
+  'network.ws.close',
+  'network.ws.error',
+  'network.sse.open',
+  'network.sse.message',
+  'network.sse.error',
+  'network.sse.close',
   'storage.snapshot',
   'storage.change',
   'system.info',
   'page.error',
   'dom.rrweb',
   'trace.hit',
+  'perf.vital',
+  'perf.longtask',
+  'perf.memory',
+  'perf.fps',
   'elements.picked',
   // Dashboard 事件 (Server → debugger)
   'dashboard.sessions',
