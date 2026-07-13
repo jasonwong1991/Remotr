@@ -14,6 +14,7 @@ import {
   type SessionId,
   type SessionSnapshot,
   type SystemInfoEvent,
+  type TraceHitEvent,
 } from '@remotr/shared';
 
 function delay(ms: number): Promise<void> {
@@ -34,6 +35,20 @@ export interface NetworkIssue {
   method?: string;
   status?: number;
   error?: string;
+  timestamp?: number;
+}
+
+/** 一次 tracepoint 命中（值均已压成 display 字符串，供 MCP 输出） */
+export interface TraceHitRecord {
+  id: string;
+  path: string;
+  seq: number;
+  args: string[];
+  ret?: string;
+  thrown?: string;
+  stack?: string;
+  durationMs: number;
+  timestamp: number;
 }
 
 /**
@@ -202,8 +217,8 @@ export class SessionConnection {
     return all.slice(-n);
   }
 
-  /** 失败的网络请求（网络错误 + 4xx/5xx 响应） */
-  networkIssues(): NetworkIssue[] {
+  /** 失败的网络请求（网络错误 + 4xx/5xx 响应），最多 max 条（取最近的） */
+  networkIssues(max = 20): NetworkIssue[] {
     const reqs = new Map<string, NetworkRequestEvent>();
     const out: NetworkIssue[] = [];
     for (const env of this.events) {
@@ -213,16 +228,38 @@ export class SessionConnection {
       } else if (env.method === 'network.error') {
         const e = env.data as NetworkErrorEvent;
         const r = reqs.get(e.reqId);
-        out.push({ url: r?.url, method: r?.method, error: e.error });
+        out.push({ url: r?.url, method: r?.method, error: e.error, timestamp: env.timestamp });
       } else if (env.method === 'network.response') {
         const e = env.data as NetworkResponseEvent;
         if (e.status >= 400) {
           const r = reqs.get(e.reqId);
-          out.push({ url: r?.url, method: r?.method, status: e.status });
+          out.push({ url: r?.url, method: r?.method, status: e.status, timestamp: env.timestamp });
         }
       }
     }
-    return out;
+    return out.slice(-max);
+  }
+
+  /** 最近的 tracepoint 命中，最多 max 条（取最近的）；可按 id 过滤 */
+  traceHits(max = 20, id?: string): TraceHitRecord[] {
+    const out: TraceHitRecord[] = [];
+    for (const env of this.events) {
+      if (env.method !== 'trace.hit') continue;
+      const h = env.data as TraceHitEvent;
+      if (id && h.id !== id) continue;
+      out.push({
+        id: h.id,
+        path: h.path,
+        seq: h.seq,
+        args: h.args.map((a) => a.display),
+        ret: h.ret?.display,
+        thrown: h.thrown?.display,
+        stack: h.stack,
+        durationMs: h.durationMs,
+        timestamp: env.timestamp,
+      });
+    }
+    return out.slice(-max);
   }
 
   close(): void {
