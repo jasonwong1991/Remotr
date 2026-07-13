@@ -130,7 +130,12 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
     }
   });
 
+  let cleanedUp = false;
   const cleanup = () => {
+    // m2：ws 'error' 往往紧跟 'close'，两个事件都绑了 cleanup；只跑一次，
+    // 否则 remove() 会被调用两次（第二次身份守卫会挡住，但仍属多余）。
+    if (cleanedUp) return;
+    cleanedUp = true;
     room.remove(member);
     // 通知 Dashboard 更新（SDK 离开时）
     if (member.role === 'sdk') {

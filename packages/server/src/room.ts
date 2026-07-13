@@ -53,6 +53,20 @@ function sameSession(a: SessionId | null | undefined, b: SessionId | null | unde
   return a.deviceId === b.deviceId && a.pageId === b.pageId;
 }
 
+/** debugger 侧 ws 发送缓冲上限：超过则丢弃转发，防止慢消费者把大帧堆在 server 堆内存里 OOM */
+const MAX_WS_BUFFERED = 12 * 1024 * 1024;
+
+/** 带背压保护的发送：连接非 OPEN 或缓冲超限时丢弃（返回 false）。 */
+function safeSend(ws: WebSocket, data: string): boolean {
+  if (ws.readyState !== ws.OPEN) return false;
+  if (ws.bufferedAmount > MAX_WS_BUFFERED) return false;
+  ws.send(data);
+  return true;
+}
+
+/** pendingReplies 条目最大存活时间：SDK 一直不回复的命令按超时回错并清除 */
+const PENDING_REPLY_TTL = 60 * 1000;
+
 /**
  * Room — 一个调试会话单元。
  * 支持多 session（多设备/多页面）的隔离路由。
@@ -74,8 +88,11 @@ export class Room {
   private backlogs = new Map<string, SessionBacklog>();
   /** 离线 session 信息（保留以便 Dashboard 展示） */
   private offlineSessions = new Map<string, SessionSnapshot>();
-  /** Pending commands: commandId → Debugger + target session（reply 路由） */
-  private pendingReplies = new Map<string, { debugger: DebuggerMember; targetSession: SessionId }>();
+  /** Pending commands: commandId → Debugger + target session（reply 路由）+ 存储时间（TTL 清理用） */
+  private pendingReplies = new Map<
+    string,
+    { debugger: DebuggerMember; targetSession: SessionId; at: number }
+  >();
 
   private readonly maxBacklog: number;
   private readonly maxRrwebBacklog: number;
@@ -83,6 +100,8 @@ export class Room {
   private readonly maxOfflineSessions: number;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private readonly recorder: RecordingManager | null;
+  /** 房间完全空（无成员且无 session 记录）时回调，供注册表删除该房间（M4：防泄漏） */
+  onEmpty: (() => void) | null = null;
 
   constructor(
     id: string,
@@ -128,9 +147,20 @@ export class Room {
       connectedAt: now,
       lastActive: now,
     };
-    this.sdks.set(sessionKey(session), member);
+    const key = sessionKey(session);
+    // 重连接管：同一 session 的旧连接被取代时先关闭其 socket。
+    // remove() 里的身份守卫保证旧 socket 迟到的 close 不会误删这个新成员。
+    const old = this.sdks.get(key);
+    if (old && old !== member) {
+      try {
+        old.ws.close(1000, 'Superseded by reconnect');
+      } catch {
+        /* 已断开等，忽略 */
+      }
+    }
+    this.sdks.set(key, member);
     // 清除离线记录
-    this.offlineSessions.delete(sessionKey(session));
+    this.offlineSessions.delete(key);
     return member;
   }
 
@@ -145,6 +175,12 @@ export class Room {
   remove(member: Member): void {
     if (member.role === 'sdk') {
       const key = sessionKey(member.session);
+
+      // 身份守卫：仅当 map 里仍是这个 member 时才拆除（M1）。
+      // 重连场景下新成员已 set 到同一 key，旧 socket 迟到的 close 不得误删/误标离线新成员。
+      if (this.sdks.get(key) !== member) {
+        return;
+      }
       this.sdks.delete(key);
 
       // Clean up pending replies for this SDK session
@@ -188,9 +224,9 @@ export class Room {
     const backlog = this.backlogs.get(key);
     if (!backlog) return;
 
-    if (backlog.lastSystemInfo) member.ws.send(encodeFrame(backlog.lastSystemInfo));
-    for (const f of backlog.rrwebBacklog) member.ws.send(encodeFrame(f));
-    for (const f of backlog.eventBacklog) member.ws.send(encodeFrame(f));
+    if (backlog.lastSystemInfo) safeSend(member.ws, encodeFrame(backlog.lastSystemInfo));
+    for (const f of backlog.rrwebBacklog) safeSend(member.ws, encodeFrame(f));
+    for (const f of backlog.eventBacklog) safeSend(member.ws, encodeFrame(f));
   }
 
   /**
@@ -237,12 +273,10 @@ export class Room {
 
       this.recordBacklog(key, frame);
 
-      // 路由到订阅了该 session 的 Debugger
+      // 路由到订阅了该 session 的 Debugger（带背压保护，慢消费者丢帧而非堆内存）
       for (const dbg of this.debuggers) {
         if (sameSession(dbg.targetSession, from.session)) {
-          if (dbg.ws.readyState === dbg.ws.OPEN) {
-            dbg.ws.send(raw);
-          }
+          safeSend(dbg.ws, raw);
         }
       }
 
@@ -251,9 +285,7 @@ export class Room {
     } else if (frame.kind === 'reply') {
       // SDK 回复 → 找到原始 Debugger
       const pending = this.pendingReplies.get(frame.reply.replyTo);
-      if (pending && pending.debugger.ws.readyState === pending.debugger.ws.OPEN) {
-        pending.debugger.ws.send(raw);
-      }
+      if (pending) safeSend(pending.debugger.ws, raw);
       this.pendingReplies.delete(frame.reply.replyTo);
     }
   }
@@ -288,7 +320,8 @@ export class Room {
     if (frame.envelope.id) {
       this.pendingReplies.set(frame.envelope.id, {
         debugger: from,
-        targetSession: target
+        targetSession: target,
+        at: Date.now(),
       });
     }
 
@@ -454,6 +487,24 @@ export class Room {
       // Notify dashboards after cleanup
       this.broadcastDashboardSnapshot();
     }
+
+    // m1：清理 SDK 一直未应答的 pending 命令，按超时回错给发起的 debugger
+    for (const [commandId, pending] of this.pendingReplies) {
+      if (now - pending.at > PENDING_REPLY_TTL) {
+        const replyFrame: Frame = {
+          kind: 'reply',
+          reply: { replyTo: commandId, error: 'Command timed out (no reply from SDK)' },
+        };
+        safeSend(pending.debugger.ws, encodeFrame(replyFrame));
+        this.pendingReplies.delete(commandId);
+      }
+    }
+
+    // M4：房间彻底空（无成员、无在线/离线 session）时通知注册表删除，
+    // 否则仅剩离线 session 的房间在 TTL 清理后会连同定时器永久泄漏。
+    if (this.size === 0 && this.getAllSessions().length === 0) {
+      this.onEmpty?.();
+    }
   }
 
   /** 获取所有 sessions（在线 + 离线） */
@@ -490,8 +541,8 @@ export class Room {
     const raw = encodeFrame(frame);
 
     for (const dbg of this.debuggers) {
-      if (dbg.targetSession === null && dbg.ws.readyState === dbg.ws.OPEN) {
-        dbg.ws.send(raw);
+      if (dbg.targetSession === null) {
+        safeSend(dbg.ws, raw);
       }
     }
   }
@@ -507,9 +558,7 @@ export class Room {
       kind: 'msg',
       envelope: makeEnvelope('dashboard.sessions', event, 'debugger'),
     };
-    if (member.ws.readyState === member.ws.OPEN) {
-      member.ws.send(encodeFrame(frame));
-    }
+    safeSend(member.ws, encodeFrame(frame));
   }
 }
 
@@ -526,6 +575,8 @@ export class RoomRegistry {
     let room = this.rooms.get(id);
     if (!room) {
       room = new Room(id, undefined, undefined, undefined, undefined, this.recorder);
+      // M4：房间自报为空时从注册表删除并清理其定时器，防止用户可控的 room id 无限累积。
+      room.onEmpty = () => this.delete(id);
       this.rooms.set(id, room);
     }
     return room;

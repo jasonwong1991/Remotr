@@ -43,12 +43,19 @@ if (!existsSync(join(panelDir, 'index.html'))) {
 // 录制：默认根目录在仓库根的 recordings/（可被 REMOTR_REC_DIR 覆盖）
 const recording = loadRecordingConfig(repoRoot);
 
-const { recorder } = startServer({ port, host, panelDir, sdkPath, recording });
+const { httpServer, wss, recorder } = startServer({ port, host, panelDir, sdkPath, recording });
 
-// 优雅关停：刷新录制流
+// 优雅关停：等录制流刷盘（含末段）后再退出；2s 兜底防止卡死。
+let shuttingDown = false;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
-    recorder.destroy();
-    process.exit(0);
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // 停止接受新连接（best-effort，不阻塞退出）。
+    wss.close();
+    httpServer.close();
+    const flush = recorder.destroy();
+    const timeout = new Promise<void>((res) => setTimeout(res, 2000).unref?.());
+    Promise.race([flush, timeout]).finally(() => process.exit(0));
   });
 }

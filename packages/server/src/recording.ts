@@ -226,7 +226,12 @@ export class RecordingManager {
     }
   }
 
-  private writeLine(rec: SessionRecorder, stream: WriteStream, line: string): void {
+  private writeLine(rec: SessionRecorder, stream: WriteStream | null, line: string): void {
+    // 流可能已被 'error' 处理器置空/销毁；此时把该行缓冲，等下次重开段刷出。
+    if (!stream || stream.destroyed) {
+      rec.buffer.push(line);
+      return;
+    }
     const buf = line + '\n';
     const n = Buffer.byteLength(buf);
     stream.write(buf);
@@ -268,6 +273,15 @@ export class RecordingManager {
         rec.metaWritten = Boolean(meta.ua);
       }
       const stream = createWriteStream(filePath, { flags: 'a' });
+      // 磁盘写错误（ENOSPC/EACCES/FD 耗尽等）不致命：丢弃当前段，
+      // 后续帧走"首段"路径重开新段。不监听则 'error' 会以未捕获异常打垮进程。
+      stream.on('error', (err) => {
+        console.warn('[Recording] stream error:', err);
+        if (rec.stream === stream) {
+          rec.stream = null;
+          rec.buffer = [];
+        }
+      });
       // 打开期间累积的帧（基线 + 实时）一次性按序刷出。
       const buffered = rec.buffer;
       rec.buffer = [];
@@ -474,16 +488,22 @@ export class RecordingManager {
     return full;
   }
 
-  /** 关闭所有流并停止定时器（server 关停时）。 */
-  destroy(): void {
+  /** 关闭所有流并停止定时器（server 关停时）。返回的 Promise 在所有流刷盘
+   *  完成（'finish'）后 resolve，供调用方在 process.exit 前 await，避免丢失末段。 */
+  destroy(): Promise<void> {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
+    const flushes: Promise<void>[] = [];
     for (const rec of this.recorders.values()) {
-      rec.stream?.end();
+      const stream = rec.stream;
       rec.stream = null;
+      if (stream && !stream.destroyed) {
+        flushes.push(new Promise<void>((resolve) => stream.end(resolve)));
+      }
     }
     this.recorders.clear();
+    return Promise.all(flushes).then(() => {});
   }
 }
