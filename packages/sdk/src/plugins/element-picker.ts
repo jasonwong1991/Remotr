@@ -1,4 +1,5 @@
 import { ElementOverlay } from './element-overlay.js';
+import { debugLog } from '../internals.js';
 
 /**
  * ElementPicker: 元素选择器模式管理器
@@ -19,10 +20,10 @@ export class ElementPicker {
    */
   start(): void {
     if (this.active) {
-      console.log('[remotr] ElementPicker.start() called but already active');
+      debugLog('[remotr] ElementPicker.start() called but already active');
       return;
     }
-    console.log('[remotr] ElementPicker.start() - activating picker');
+    debugLog('[remotr] ElementPicker.start() - activating picker');
     this.active = true;
 
     // 添加事件监听器（捕获阶段，优先级最高）
@@ -32,7 +33,7 @@ export class ElementPicker {
 
     // 改变光标样式
     document.body.style.cursor = 'crosshair';
-    console.log('[remotr] ElementPicker - events bound, cursor set to crosshair');
+    debugLog('[remotr] ElementPicker - events bound, cursor set to crosshair');
   }
 
   /**
@@ -71,16 +72,16 @@ export class ElementPicker {
    */
   private onClick = (e: MouseEvent): void => {
     if (!this.active) {
-      console.log('[remotr] ElementPicker.onClick - picker not active');
+      debugLog('[remotr] ElementPicker.onClick - picker not active');
       return;
     }
 
-    console.log('[remotr] ElementPicker.onClick - element clicked');
+    debugLog('[remotr] ElementPicker.onClick - element clicked');
     e.preventDefault();
     e.stopPropagation();
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement;
     if (el && !el.hasAttribute('data-remotr-overlay')) {
-      console.log('[remotr] ElementPicker - picked element:', el.tagName, el.className);
+      debugLog('[remotr] ElementPicker - picked element:', el.tagName, el.className);
       this.onPick(el);
       this.stop();
     }

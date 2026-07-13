@@ -36,7 +36,15 @@ const now = (): number =>
     ? performance.now()
     : Date.now();
 
-export function installTrace(transport: Transport): void {
+/**
+ * 全局上报重入守卫。若用户对上报路径上的内建函数(Array.prototype.map、
+ * JSON.stringify、Error、Object.keys、performance.now、transport.send 内部依赖…)
+ * 设了追踪点,每次上报都会再次进入被包装函数 → 无界递归 → 标签页崩溃。
+ * 上报期间置位此标志;重入时被包装函数照常执行业务,仅跳过上报。
+ */
+let reporting = false;
+
+export function installTrace(transport: Transport): () => void {
   /** id → 已包装的追踪点 */
   const active = new Map<string, ActiveEntry>();
   /** 已被追踪的路径集合(防止对同一路径重复包装导致嵌套) */
@@ -46,6 +54,17 @@ export function installTrace(transport: Transport): void {
 
   transport.onCommand('trace.set', (data) => setTracepoint((data as TraceSetCmd).tracepoint));
   transport.onCommand('trace.remove', (data) => removeTracepoint((data as TraceRemoveCmd).id));
+
+  /** 卸载:还原所有已包装的追踪点 */
+  const uninstall = (): void => {
+    for (const id of Array.from(active.keys())) {
+      try {
+        removeTracepoint(id);
+      } catch {
+        /* best-effort */
+      }
+    }
+  };
 
   function setTracepoint(tp: TracepointDef): TraceSetResult {
     if (active.has(tp.id)) return { ok: false, error: `Tracepoint ${tp.id} already set` };
@@ -130,6 +149,8 @@ export function installTrace(transport: Transport): void {
     original: (...args: unknown[]) => unknown,
   ): (...args: unknown[]) => unknown {
     function wrapped(this: unknown, ...args: unknown[]): unknown {
+      // 重入(上报路径调用了被追踪的内建函数):只执行业务,完全跳过计时与上报
+      if (reporting) return original.apply(this, args);
       const start = now();
       let ret: unknown;
       let thrown: unknown;
@@ -143,6 +164,7 @@ export function installTrace(transport: Transport): void {
         throw err;
       } finally {
         // 上报与业务完全隔离:任何异常都不得逃逸到被追踪函数
+        reporting = true;
         try {
           const durationMs = now() - start;
           const pass = tp.condition
@@ -164,6 +186,8 @@ export function installTrace(transport: Transport): void {
           }
         } catch {
           /* 采集失败绝不影响业务 */
+        } finally {
+          reporting = false;
         }
       }
     }
@@ -180,6 +204,8 @@ export function installTrace(transport: Transport): void {
 
     return wrapped;
   }
+
+  return uninstall;
 }
 
 /**

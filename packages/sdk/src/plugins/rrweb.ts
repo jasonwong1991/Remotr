@@ -1,6 +1,7 @@
 import { record } from 'rrweb';
 import type { recordOptions, eventWithTime } from 'rrweb';
 import type { Transport } from '../transport.js';
+import { debugWarn } from '../internals.js';
 
 /**
  * Get the rrweb mirror instance for node ID lookups.
@@ -57,6 +58,6 @@ export function installRrweb(transport: Transport): void {
     record(options);
   } catch (err) {
     // rrweb 初始化失败不应阻断其他采集功能
-    console.warn('[remotr] rrweb record failed:', err);
+    debugWarn('[remotr] rrweb record failed:', err);
   }
 }

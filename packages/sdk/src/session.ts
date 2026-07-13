@@ -6,6 +6,39 @@
 import type { SessionId, SessionMetadata } from '@remotr/shared';
 
 /**
+ * 模块加载时（storage 插件 hook 安装前）捕获的原始 setItem。
+ * 心跳每 3s 写一次 __remotr_tabs:* —— 若走被劫持的 setItem，会把 SDK 自己的
+ * 内部写入采集成 storage.change 噪声。localStorage 访问在隐私模式可能抛错。
+ */
+const rawSetItem: ((key: string, value: string) => void) | null = (() => {
+  try {
+    return localStorage.setItem.bind(localStorage);
+  } catch {
+    return null;
+  }
+})();
+
+function internalSetItem(key: string, value: string): void {
+  if (rawSetItem) rawSetItem(key, value);
+  else localStorage.setItem(key, value);
+}
+
+/** slot 心跳 teardown（由 claimPageSlot 设置，stopSession 调用）。 */
+let slotHeartbeatTeardown: (() => void) | null = null;
+
+/** 停止 session 相关的后台活动：清心跳定时器、解绑卸载监听、释放 slot。 */
+export function stopSession(): void {
+  if (slotHeartbeatTeardown) {
+    try {
+      slotHeartbeatTeardown();
+    } catch {
+      /* best-effort */
+    }
+    slotHeartbeatTeardown = null;
+  }
+}
+
+/**
  * 生成随机 ID
  */
 function randomId(length = 16): string {
@@ -66,7 +99,7 @@ export function getDeviceId(configDeviceId?: string): string {
     let id = localStorage.getItem(key);
     if (!id) {
       id = `dev_${randomId(16)}`;
-      localStorage.setItem(key, id);
+      internalSetItem(key, id);
     }
     return id;
   } catch {
@@ -143,25 +176,25 @@ function claimPageSlot(base: string): string {
       const reg = pruneRegistry(readRegistry(regKey), now);
       slot = lowestFreeSlot(reg, base);
       reg[slot] = { t: token, ts: now };
-      localStorage.setItem(regKey, JSON.stringify(reg));
+      internalSetItem(regKey, JSON.stringify(reg));
       // 并发校验：确认 slot 仍归我；被他人覆盖则换下一个重试
       const after = readRegistry(regKey);
       if (after[slot] && after[slot].t === token) break;
     }
-    startSlotHeartbeat(regKey, slot, token);
+    slotHeartbeatTeardown = startSlotHeartbeat(regKey, slot, token);
   } catch {
     return base;
   }
   return slot;
 }
 
-/** 启动 slot 心跳，并在页面卸载时释放 slot。 */
-function startSlotHeartbeat(regKey: string, slot: string, token: string): void {
+/** 启动 slot 心跳，并在页面卸载时释放 slot。返回停止心跳 + 解绑监听的 teardown。 */
+function startSlotHeartbeat(regKey: string, slot: string, token: string): () => void {
   const beat = () => {
     try {
       const reg = pruneRegistry(readRegistry(regKey), Date.now());
       reg[slot] = { t: token, ts: Date.now() };
-      localStorage.setItem(regKey, JSON.stringify(reg));
+      internalSetItem(regKey, JSON.stringify(reg));
     } catch {
       /* ignore */
     }
@@ -171,15 +204,22 @@ function startSlotHeartbeat(regKey: string, slot: string, token: string): void {
       const reg = readRegistry(regKey);
       if (reg[slot] && reg[slot].t === token) {
         delete reg[slot];
-        localStorage.setItem(regKey, JSON.stringify(reg));
+        internalSetItem(regKey, JSON.stringify(reg));
       }
     } catch {
       /* ignore */
     }
   };
-  setInterval(beat, HEARTBEAT_MS);
+  const timer = setInterval(beat, HEARTBEAT_MS);
   window.addEventListener('pagehide', release);
   window.addEventListener('beforeunload', release);
+
+  return () => {
+    clearInterval(timer);
+    window.removeEventListener('pagehide', release);
+    window.removeEventListener('beforeunload', release);
+    release();
+  };
 }
 
 /**

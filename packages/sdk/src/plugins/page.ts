@@ -6,11 +6,20 @@ import { buildSessionMetadata } from '../session.js';
 /**
  * Page 插件：上报系统信息，并处理 eval.run / page.reload 命令。
  */
-export function installPage(transport: Transport): void {
+export function installPage(transport: Transport): () => void {
   transport.onConnected(() => sendSystemInfo(transport));
 
-  // 视口变化时更新系统信息
-  window.addEventListener('resize', () => sendSystemInfo(transport));
+  // 视口变化时更新系统信息。窗口拖拽会高频触发 resize，防抖 ~200ms 避免
+  // system.info / metadata 刷屏。
+  let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  const onResize = (): void => {
+    if (resizeTimer !== null) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      sendSystemInfo(transport);
+    }, 200);
+  };
+  window.addEventListener('resize', onResize);
 
   transport.onCommand('eval.run', (data) => {
     const { code } = data as { code: string };
@@ -30,6 +39,11 @@ export function installPage(transport: Transport): void {
     setTimeout(() => location.reload(), 50);
     return { ok: true };
   });
+
+  return () => {
+    if (resizeTimer !== null) clearTimeout(resizeTimer);
+    window.removeEventListener('resize', onResize);
+  };
 }
 
 function sendSystemInfo(transport: Transport): void {

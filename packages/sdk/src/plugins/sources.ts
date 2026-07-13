@@ -1,5 +1,9 @@
 import type { Transport } from '../transport.js';
 import type { ScriptInfo, SourcesFetchResult } from '@remotr/shared';
+import { rawFetch } from '../internals.js';
+
+/** SDK 内部代取用原始 fetch（network hook 安装前捕获），避免把自己的请求采集成 network 噪声 */
+const doFetch: typeof fetch = rawFetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
 
 /**
  * Sources 插件：响应调试端的 sources.* 命令，由 SDK 在页面同源上下文中
@@ -46,7 +50,7 @@ async function fetchSource(url: string): Promise<SourcesFetchResult> {
   try {
     // 静态资源（js/map）不需要 Cookie，一律 omit：避免 CORS 规范下
     // "带凭据 + ACAO:* 被拒"（TypeError: Load failed）。
-    const res = await fetch(url, { credentials: 'omit' });
+    const res = await doFetch(url, { credentials: 'omit' });
     if (!res.ok) return { url, content: '', error: `HTTP ${res.status}` };
 
     let content = await res.text();
@@ -68,7 +72,7 @@ async function fetchSource(url: string): Promise<SourcesFetchResult> {
         try {
           const abs = new URL(smURL, url).href;
           sourceMappingURL = abs;
-          const mapRes = await fetch(abs, { credentials: 'omit' });
+          const mapRes = await doFetch(abs, { credentials: 'omit' });
           if (mapRes.ok) {
             const mapText = await mapRes.text();
             if (mapText.length > MAX_BYTES) truncated = true;

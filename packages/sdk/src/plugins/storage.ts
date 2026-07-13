@@ -7,7 +7,7 @@ import type { Transport } from '../transport.js';
  * - 劫持 setItem/removeItem/clear 上报增量
  * - 响应调试端的 storage.* 命令（读/写/删/清）
  */
-export function installStorage(transport: Transport): void {
+export function installStorage(transport: Transport): () => void {
   // 连接建立后推送初始快照
   transport.onConnected(() => {
     sendSnapshot(transport, 'local');
@@ -15,8 +15,8 @@ export function installStorage(transport: Transport): void {
     sendSnapshot(transport, 'cookie');
   });
 
-  hookStorage(transport, 'local', window.localStorage);
-  hookStorage(transport, 'session', window.sessionStorage);
+  const restoreLocal = hookStorage(transport, 'local', window.localStorage);
+  const restoreSession = hookStorage(transport, 'session', window.sessionStorage);
 
   // 命令处理
   transport.onCommand('storage.getAll', (data) => {
@@ -60,6 +60,24 @@ export function installStorage(transport: Transport): void {
     }
     return { ok: true };
   });
+
+  return () => {
+    try {
+      restoreLocal();
+    } catch {
+      /* best-effort */
+    }
+    try {
+      restoreSession();
+    } catch {
+      /* best-effort */
+    }
+  };
+}
+
+/** SDK 内部键前缀：这些写入是 SDK 自己的（如 session 心跳），不应采集成 storage.change */
+function isInternalKey(key: string): boolean {
+  return key.indexOf('__remotr_') === 0;
 }
 
 function getStore(type: StorageType): Storage | null {
@@ -101,14 +119,15 @@ function sendSnapshot(transport: Transport, type: StorageType): void {
   }
 }
 
-/** 劫持 Storage 写操作上报增量变化 */
-function hookStorage(transport: Transport, type: StorageType, store: Storage): void {
+/** 劫持 Storage 写操作上报增量变化。返回还原原始方法的函数。 */
+function hookStorage(transport: Transport, type: StorageType, store: Storage): () => void {
   const origSet = store.setItem.bind(store);
   const origRemove = store.removeItem.bind(store);
   const origClear = store.clear.bind(store);
 
   const wrappedSet = (key: string, value: string) => {
     origSet(key, value);
+    if (isInternalKey(key)) return; // 跳过 SDK 自身写入，避免自噪声
     try {
       transport.send('storage.change', { storageType: type, action: 'set', key, value });
     } catch {
@@ -118,6 +137,7 @@ function hookStorage(transport: Transport, type: StorageType, store: Storage): v
 
   const wrappedRemove = (key: string) => {
     origRemove(key);
+    if (isInternalKey(key)) return;
     try {
       transport.send('storage.change', { storageType: type, action: 'remove', key });
     } catch {
@@ -147,5 +167,20 @@ function hookStorage(transport: Transport, type: StorageType, store: Storage): v
     // Storage is frozen/sealed — cannot intercept.
     // Some modified webviews protect Storage.prototype from any mutation.
     // Skip silently: storage monitoring degrades gracefully.
+    return () => {
+      /* nothing was hooked */
+    };
   }
+
+  return () => {
+    try {
+      Object.defineProperties(store, {
+        setItem: { value: origSet, writable: true, configurable: true },
+        removeItem: { value: origRemove, writable: true, configurable: true },
+        clear: { value: origClear, writable: true, configurable: true },
+      });
+    } catch {
+      /* best-effort restore */
+    }
+  };
 }

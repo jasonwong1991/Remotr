@@ -1,4 +1,5 @@
 import type { Transport } from '../transport.js';
+import { debugWarn } from '../internals.js';
 
 let reqCounter = 0;
 function nextId(): string {
@@ -146,7 +147,7 @@ function hookResourceTiming(transport: Transport): void {
     observer.observe({ entryTypes: ['resource'] });
   } catch (e) {
     // 浏览器不支持时静默降级
-    console.warn('[remotr] PerformanceObserver resource entries unavailable:', e);
+    debugWarn('[remotr] PerformanceObserver resource entries unavailable:', e);
   }
 }
 

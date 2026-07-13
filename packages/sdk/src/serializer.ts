@@ -80,41 +80,68 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): SpyAtom {
   seen.add(obj);
   try {
     if (Array.isArray(value)) {
+      // proxy 包装的数组读 length 也可能触发抛错的 get trap
+      let len: number;
+      try {
+        len = value.length;
+      } catch {
+        return { type: 'array', display: '[Unreadable]' };
+      }
       const children: SpyAtomEntry[] = [];
-      const limit = Math.min(value.length, MAX_CHILDREN);
+      const limit = Math.min(len, MAX_CHILDREN);
+      // 迭代可能触发抛错的 proxy 陷阱(getter/has trap);逐项包裹,失败降级为占位。
       for (let i = 0; i < limit; i++) {
-        children.push({ key: String(i), value: walk(value[i], depth + 1, seen) });
+        try {
+          children.push({ key: String(i), value: walk(value[i], depth + 1, seen) });
+        } catch {
+          children.push({ key: String(i), value: { type: 'string', display: '[Unreadable]' } });
+        }
       }
       return {
         type: 'array',
-        display: `Array(${value.length})`,
+        display: `Array(${len})`,
         children,
-        truncated: value.length > MAX_CHILDREN || undefined,
+        truncated: len > MAX_CHILDREN || undefined,
       };
     }
 
-    // Map / Set 简要处理
+    // Map / Set 简要处理。for..of 会走 Symbol.iterator,恶意/异常 proxy 可能在
+    // 迭代过程中抛错 —— 整体包 try/catch,已收集的子项照常返回(部分降级)。
     if (value instanceof Map) {
       const children: SpyAtomEntry[] = [];
-      let i = 0;
-      for (const [k, v] of value) {
-        if (i++ >= MAX_CHILDREN) break;
-        children.push({ key: safeKey(k), value: walk(v, depth + 1, seen) });
+      try {
+        let i = 0;
+        for (const [k, v] of value) {
+          if (i++ >= MAX_CHILDREN) break;
+          children.push({ key: safeKey(k), value: walk(v, depth + 1, seen) });
+        }
+      } catch {
+        children.push({ key: '…', value: { type: 'string', display: '[Unreadable]' } });
       }
-      return { type: 'object', display: `Map(${value.size})`, children };
+      return { type: 'object', display: `Map(${safeSize(value)})`, children };
     }
     if (value instanceof Set) {
       const children: SpyAtomEntry[] = [];
-      let i = 0;
-      for (const v of value) {
-        if (i >= MAX_CHILDREN) break;
-        children.push({ key: String(i++), value: walk(v, depth + 1, seen) });
+      try {
+        let i = 0;
+        for (const v of value) {
+          if (i >= MAX_CHILDREN) break;
+          children.push({ key: String(i++), value: walk(v, depth + 1, seen) });
+        }
+      } catch {
+        children.push({ key: '…', value: { type: 'string', display: '[Unreadable]' } });
       }
-      return { type: 'object', display: `Set(${value.size})`, children };
+      return { type: 'object', display: `Set(${safeSize(value)})`, children };
     }
 
     // 普通对象
-    const keys = Object.keys(obj);
+    let keys: string[];
+    try {
+      keys = Object.keys(obj);
+    } catch {
+      // Object.keys 在恶意 proxy 的 ownKeys/getOwnPropertyDescriptor trap 上可能抛错
+      return { type: 'object', display: '[Unreadable]' };
+    }
     const children: SpyAtomEntry[] = [];
     const limit = Math.min(keys.length, MAX_CHILDREN);
     for (let i = 0; i < limit; i++) {
@@ -142,6 +169,15 @@ function safeKey(k: unknown): string {
     return typeof k === 'object' ? JSON.stringify(k) : String(k);
   } catch {
     return String(k);
+  }
+}
+
+/** 读取 Map/Set 的 size，proxy 陷阱抛错时降级为 '?'。 */
+function safeSize(value: { size: number }): string {
+  try {
+    return String(value.size);
+  } catch {
+    return '?';
   }
 }
 

@@ -2,6 +2,7 @@ import type { Transport } from '../transport.js';
 import { ElementRegistry } from './element-registry.js';
 import { ElementOverlay } from './element-overlay.js';
 import { ElementPicker } from './element-picker.js';
+import { rawFetch, debugLog, debugWarn } from '../internals.js';
 import type {
   ElementsGetComputedStylesCmd,
   ElementsGetComputedStylesResult,
@@ -148,6 +149,9 @@ function rewriteForcedSelector(selector: string, forced: string[]): string {
  */
 const _parsedSheetCache = new Map<string, CSSRuleList | null>();
 
+/** SDK 内部代取 CSS 用原始 fetch，避免被 network hook 采集成噪声 */
+const doFetch: typeof fetch = rawFetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+
 async function accessibleRules(sheet: CSSStyleSheet): Promise<CSSRuleList | null> {
   try {
     return sheet.cssRules;
@@ -164,7 +168,7 @@ async function accessibleRules(sheet: CSSStyleSheet): Promise<CSSRuleList | null
 
   try {
     // 静态 CSS 不需要 Cookie，一律 omit：避免 CORS 规范下"带凭据 + ACAO:* 被拒"。
-    const res = await fetch(href, { credentials: 'omit' });
+    const res = await doFetch(href, { credentials: 'omit' });
     if (!res.ok) {
       _parsedSheetCache.set(href, null);
       return null;
@@ -176,7 +180,7 @@ async function accessibleRules(sheet: CSSStyleSheet): Promise<CSSRuleList | null
     _parsedSheetCache.set(href, rules);
     return rules;
   } catch (err) {
-    console.warn('[remotr] Failed to fetch+parse cross-origin stylesheet:', href, err);
+    debugWarn('[remotr] Failed to fetch+parse cross-origin stylesheet:', href, err);
     _parsedSheetCache.set(href, null);
     return null;
   }
@@ -267,7 +271,7 @@ export function installElements(transport: Transport): void {
     if (rrwebId !== undefined) {
       transport.send('elements.picked', { nodeId: rrwebId });
     } else {
-      console.warn('[remotr] Picked element has no rrweb ID');
+      debugWarn('[remotr] Picked element has no rrweb ID');
     }
   });
 
@@ -324,7 +328,7 @@ export function installElements(transport: Transport): void {
 
   // 处理启动元素选择器命令
   transport.onCommand('elements.startPicker', () => {
-    console.log('[remotr] elements.startPicker command received');
+    debugLog('[remotr] elements.startPicker command received');
     picker.start();
     return { ok: true };
   });
