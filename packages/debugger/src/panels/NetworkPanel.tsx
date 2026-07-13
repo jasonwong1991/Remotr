@@ -1,7 +1,59 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import type { NetworkRecord } from '../store';
+import type { NetworkRecord, WsConnectionRecord, WsFrameRecord } from '../store';
 import { useT, type MessageKey, type TFunc } from '../i18n';
+import { copyToClipboard } from '../clipboard';
+import { buildCurl } from '../curl';
+import { buildHar } from '../har';
+
+/** Resource type buckets for the HTTP type filter. */
+export type ResourceType = 'xhr' | 'js' | 'css' | 'img' | 'doc' | 'other';
+
+const RESOURCE_TYPES: ResourceType[] = ['xhr', 'js', 'css', 'img', 'doc', 'other'];
+
+/**
+ * Classify a record into a coarse resource type for filtering.
+ * Prefers the initiator (JS-API vs tag-load), then response MIME, then the
+ * URL extension — each source is best-effort so classification stays robust
+ * when captured data is partial.
+ */
+export function resourceType(record: NetworkRecord): ResourceType {
+  const initiator = record.request?.initiator;
+  if (initiator === 'fetch' || initiator === 'xhr' || initiator === 'beacon') return 'xhr';
+  if (initiator === 'script') return 'js';
+  if (initiator === 'css' || initiator === 'link') return 'css';
+  if (initiator === 'img') return 'img';
+  if (initiator === 'iframe') return 'doc';
+
+  const mime = record.response?.mimeType?.toLowerCase() ?? '';
+  if (mime.includes('javascript') || mime.includes('ecmascript')) return 'js';
+  if (mime.includes('css')) return 'css';
+  if (mime.startsWith('image/')) return 'img';
+  if (mime.includes('html')) return 'doc';
+
+  const url = record.request?.url ?? '';
+  const path = url.split(/[?#]/)[0];
+  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  if (ext === 'js' || ext === 'mjs' || ext === 'cjs') return 'js';
+  if (ext === 'css') return 'css';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'ico', 'bmp'].includes(ext)) return 'img';
+  if (ext === 'html' || ext === 'htm') return 'doc';
+
+  return 'other';
+}
+
+/** Trigger a client-side download of `text` as a named file via a temporary blob URL. */
+function downloadTextFile(text: string, filename: string, mimeType: string): void {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 export function statusColor(status?: number): string {
   if (!status) return 'var(--status-pending)';
@@ -163,11 +215,18 @@ function CacheBadge({ t }: { t: TFunc }): React.ReactElement {
 export function DetailPanel({ record }: { record: NetworkRecord }): React.ReactElement {
   const t = useT();
   const [tab, setTab] = useState<'general' | 'req-headers' | 'res-headers' | 'req-body' | 'res-body' | 'timing'>('general');
+  const [copied, setCopied] = useState(false);
   const tabs = ['general', 'req-headers', 'res-headers', 'req-body', 'res-body', 'timing'] as const;
 
   const status = record.response?.status;
   const isEstimated = !!record.request?.timing && !record.response?.headers
     || (record.response && Object.keys(record.response.headers).length === 0);
+
+  const copyCurl = async (): Promise<void> => {
+    await copyToClipboard(buildCurl(record));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div style={{
@@ -178,7 +237,7 @@ export function DetailPanel({ record }: { record: NetworkRecord }): React.ReactE
       flexDirection: 'column',
       flexShrink: 0,
     }}>
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)' }}>
         {tabs.map((tabKey) => (
           <button
             key={tabKey}
@@ -194,6 +253,20 @@ export function DetailPanel({ record }: { record: NetworkRecord }): React.ReactE
             {t(`network.tab.${tabKey}` as MessageKey)}
           </button>
         ))}
+        <button
+          onClick={copyCurl}
+          disabled={!record.request}
+          title={t('network.copyCurlTitle')}
+          style={{
+            marginLeft: 'auto', marginRight: 6,
+            border: 'none', background: 'transparent',
+            color: copied ? 'var(--status-2xx)' : 'var(--accent-blue)',
+            fontSize: 11, cursor: record.request ? 'pointer' : 'default',
+            opacity: record.request ? 1 : 0.5,
+          }}
+        >
+          {copied ? t('network.copyCurlDone') : t('network.copyCurl')}
+        </button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '6px 10px', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
         {tab === 'general' && (
@@ -243,22 +316,31 @@ export function DetailPanel({ record }: { record: NetworkRecord }): React.ReactE
   );
 }
 
-export default function NetworkPanel(): React.ReactElement {
+function HttpView(): React.ReactElement {
   const networkMap = useStore((s) => s.networkMap);
   const clearNetwork = useStore((s) => s.clearNetwork);
   const [filter, setFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState<ResourceType | 'all'>('all');
   const [selected, setSelected] = useState<string | null>(null);
   const t = useT();
 
-  const records = Array.from(networkMap.values()).filter((r) => {
+  const allRecords = Array.from(networkMap.values());
+  const records = allRecords.filter((r) => {
+    if (typeFilter !== 'all' && resourceType(r) !== typeFilter) return false;
     if (!filter) return true;
     return (r.request?.url ?? '').toLowerCase().includes(filter.toLowerCase());
   });
 
   const selectedRecord = selected ? networkMap.get(selected) : null;
 
+  const exportHar = (): void => {
+    const har = buildHar(allRecords, '0.2.0');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadTextFile(JSON.stringify(har, null, 2), `remotr-${ts}.har`, 'application/json');
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {/* Toolbar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
@@ -272,6 +354,23 @@ export default function NetworkPanel(): React.ReactElement {
           onChange={(e) => setFilter(e.target.value)}
           style={{ flex: 1, maxWidth: 300 }}
         />
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value as ResourceType | 'all')}
+          style={{ fontSize: 11 }}
+        >
+          <option value="all">{t('network.filterTypeAll')}</option>
+          {RESOURCE_TYPES.map((rt) => (
+            <option key={rt} value={rt}>{t(`network.filterType.${rt}` as MessageKey)}</option>
+          ))}
+        </select>
+        <button
+          onClick={exportHar}
+          disabled={allRecords.length === 0}
+          title={t('network.exportHarTitle')}
+        >
+          {t('network.exportHar')}
+        </button>
         <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('network.requests', { count: records.length })}</span>
       </div>
 
@@ -327,6 +426,272 @@ export default function NetworkPanel(): React.ReactElement {
 
       {/* Detail panel */}
       {selectedRecord && <DetailPanel record={selectedRecord} />}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// WS / SSE 子视图：连接列表 + 选中连接的帧日志
+// ─────────────────────────────────────────────────────────
+
+function wsStatusColor(status: WsConnectionRecord['status']): string {
+  if (status === 'open') return 'var(--status-2xx)';
+  if (status === 'error') return 'var(--status-4xx)';
+  return 'var(--text-muted)';
+}
+
+function fmtFrameTime(ts: number): string {
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${hh}:${mm}:${ss}.${ms}`;
+}
+
+function KindBadge({ kind }: { kind: WsConnectionRecord['kind'] }): React.ReactElement {
+  return (
+    <span
+      style={{
+        background: kind === 'ws' ? 'var(--accent-purple)' : 'var(--accent-blue)',
+        color: '#fff',
+        padding: '0 4px',
+        borderRadius: 2,
+        fontSize: 9,
+        fontWeight: 600,
+        textTransform: 'uppercase',
+      }}
+    >
+      {kind === 'ws' ? 'WS' : 'SSE'}
+    </span>
+  );
+}
+
+function TruncatedBadge({ t }: { t: TFunc }): React.ReactElement {
+  return (
+    <span
+      style={{
+        background: 'var(--bg-tertiary)',
+        color: 'var(--text-secondary)',
+        padding: '0 4px',
+        borderRadius: 2,
+        fontSize: 9,
+        marginLeft: 4,
+        fontStyle: 'italic',
+      }}
+    >
+      {t('network.ws.truncated')}
+    </span>
+  );
+}
+
+/** 选中连接的帧日志（结构对齐 HTTP 的 DetailPanel：底部固定高度） */
+function WsFrameLog({ conn, t }: { conn: WsConnectionRecord; t: TFunc }): React.ReactElement {
+  const [selectedFrame, setSelectedFrame] = useState<number | null>(null);
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border)',
+      background: 'var(--bg-secondary)',
+      height: 240,
+      display: 'flex',
+      flexDirection: 'column',
+      flexShrink: 0,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px',
+        borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)',
+        fontSize: 11, flexShrink: 0,
+      }}>
+        <KindBadge kind={conn.kind} />
+        <span style={{ color: 'var(--text-primary)', wordBreak: 'break-all' }}>{conn.url}</span>
+        <span style={{ color: wsStatusColor(conn.status) }}>
+          {conn.status === 'closed' && conn.closeCode != null
+            ? t('network.ws.closedWith', { code: conn.closeCode })
+            : t(`network.ws.status.${conn.status}` as MessageKey)}
+        </span>
+        <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>
+          {t('network.ws.frames', { count: conn.frames.length })}
+        </span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+        {conn.frames.length === 0 ? (
+          <span style={{ color: 'var(--text-muted)', padding: '6px 10px', display: 'inline-block' }}>
+            {t('network.ws.noFrames')}
+          </span>
+        ) : (
+          <table style={{ width: '100%' }}>
+            <thead>
+              <tr>
+                <th style={{ width: 90 }}>{t('network.ws.colTime')}</th>
+                <th style={{ width: 32 }}>{t('network.ws.colDir')}</th>
+                {conn.kind === 'sse' && <th style={{ width: 90 }}>{t('network.ws.colEvent')}</th>}
+                <th style={{ width: 70 }}>{t('network.ws.colSize')}</th>
+                <th>{t('network.ws.colData')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conn.frames.map((f: WsFrameRecord, i: number) => {
+                const isSelected = selectedFrame === i;
+                const dirColor = f.direction === 'send' ? 'var(--status-2xx)' : 'var(--accent-blue)';
+                return (
+                  <tr
+                    key={i}
+                    onClick={() => setSelectedFrame(isSelected ? null : i)}
+                    style={{ cursor: 'pointer', background: isSelected ? 'var(--bg-selected)' : undefined }}
+                  >
+                    <td style={{ color: 'var(--text-muted)' }}>{fmtFrameTime(f.timestamp)}</td>
+                    <td style={{ color: dirColor, fontWeight: 600 }}>{f.direction === 'send' ? '↑' : '↓'}</td>
+                    {conn.kind === 'sse' && <td style={{ color: 'var(--accent-purple)' }}>{f.event ?? 'message'}</td>}
+                    <td style={{ color: 'var(--text-secondary)' }}>{formatBytes(f.size)}</td>
+                    <td style={{ color: f.binary ? 'var(--text-muted)' : 'var(--text-primary)' }}>
+                      {isSelected ? (
+                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>
+                          {tryFormatJson(f.data)}
+                        </pre>
+                      ) : (
+                        <span style={{
+                          display: 'inline-block', maxWidth: 480, overflow: 'hidden',
+                          textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+                        }}>
+                          {f.data}
+                        </span>
+                      )}
+                      {f.truncated && <TruncatedBadge t={t} />}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WsView(): React.ReactElement {
+  const wsConnections = useStore((s) => s.wsConnections);
+  const clearWs = useStore((s) => s.clearWs);
+  const [filter, setFilter] = useState('');
+  const [selected, setSelected] = useState<string | null>(null);
+  const t = useT();
+
+  const conns = Array.from(wsConnections.values()).filter((c) => {
+    if (!filter) return true;
+    return c.url.toLowerCase().includes(filter.toLowerCase());
+  });
+
+  const selectedConn = selected ? wsConnections.get(selected) : null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {/* Toolbar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
+        background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0,
+      }}>
+        <button onClick={clearWs}>{t('common.clear')}</button>
+        <input
+          type="text"
+          placeholder={t('network.filterUrl')}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          style={{ flex: 1, maxWidth: 300 }}
+        />
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+          {t('network.ws.connections', { count: conns.length })}
+        </span>
+      </div>
+
+      {/* Connections table */}
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {conns.length === 0 ? (
+          <div style={{ color: 'var(--text-muted)', padding: 12, fontSize: 12 }}>
+            {t('network.ws.noConnections')}
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: '30%' }}>{t('network.name')}</th>
+                <th style={{ width: '8%' }}>{t('network.type')}</th>
+                <th style={{ width: '12%' }}>{t('network.status')}</th>
+                <th style={{ width: '10%' }}>{t('network.ws.colSize')}</th>
+                <th>{t('network.url')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conns.map((c) => {
+                const isSelected = selected === c.connectionId;
+                return (
+                  <tr
+                    key={c.connectionId}
+                    onClick={() => setSelected(isSelected ? null : c.connectionId)}
+                    style={{
+                      cursor: 'pointer',
+                      background: isSelected ? 'var(--bg-selected)' : undefined,
+                    }}
+                  >
+                    <td style={{ color: c.status === 'error' ? 'var(--accent-red)' : 'var(--text-primary)', maxWidth: 200 }}>
+                      {urlName(c.url)}
+                    </td>
+                    <td><KindBadge kind={c.kind} /></td>
+                    <td style={{ color: wsStatusColor(c.status) }}>
+                      {t(`network.ws.status.${c.status}` as MessageKey)}
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)' }}>
+                      {t('network.ws.frames', { count: c.frames.length })}
+                    </td>
+                    <td style={{ color: 'var(--text-muted)', maxWidth: 300 }}>{c.url}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Frame log */}
+      {selectedConn ? (
+        <WsFrameLog conn={selectedConn} t={t} />
+      ) : conns.length > 0 ? (
+        <div style={{
+          borderTop: '1px solid var(--border)', background: 'var(--bg-secondary)',
+          padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11, flexShrink: 0,
+        }}>
+          {t('network.ws.selectConn')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export default function NetworkPanel(): React.ReactElement {
+  const [view, setView] = useState<'http' | 'ws'>('http');
+  const t = useT();
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* HTTP / WS-SSE sub-view toggle（样式对齐 DetailPanel 的 tab 行） */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)', flexShrink: 0 }}>
+        {(['http', 'ws'] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            style={{
+              borderRadius: 0, border: 'none',
+              borderBottom: view === v ? '2px solid var(--accent-blue)' : '2px solid transparent',
+              background: 'transparent',
+              color: view === v ? 'var(--text-primary)' : 'var(--text-secondary)',
+              padding: '4px 10px', fontSize: 11,
+            }}
+          >
+            {t(v === 'http' ? 'network.view.http' : 'network.view.ws')}
+          </button>
+        ))}
+      </div>
+      {view === 'http' ? <HttpView /> : <WsView />}
     </div>
   );
 }

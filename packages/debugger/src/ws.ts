@@ -105,6 +105,33 @@ function handleFrame(raw: string, generation: number): void {
     case 'network.error':
       store.addNetworkError(data as MethodData['network.error']);
       break;
+    case 'network.ws.open':
+      store.addWsOpen(data as MethodData['network.ws.open']);
+      break;
+    case 'network.ws.send':
+      store.addWsFrame('send', data as MethodData['network.ws.send']);
+      break;
+    case 'network.ws.message':
+      store.addWsFrame('recv', data as MethodData['network.ws.message']);
+      break;
+    case 'network.ws.close':
+      store.addWsClose(data as MethodData['network.ws.close']);
+      break;
+    case 'network.ws.error':
+      store.addWsError(data as MethodData['network.ws.error']);
+      break;
+    case 'network.sse.open':
+      store.addSseOpen(data as MethodData['network.sse.open']);
+      break;
+    case 'network.sse.message':
+      store.addSseMessage(data as MethodData['network.sse.message']);
+      break;
+    case 'network.sse.error':
+      store.addSseError(data as MethodData['network.sse.error']);
+      break;
+    case 'network.sse.close':
+      store.addSseClose(data as MethodData['network.sse.close']);
+      break;
     case 'storage.snapshot':
       store.applyStorageSnapshot(data as MethodData['storage.snapshot']);
       break;
@@ -116,6 +143,18 @@ function handleFrame(raw: string, generation: number): void {
       break;
     case 'trace.hit':
       store.addTraceHit(data as MethodData['trace.hit'], timestamp);
+      break;
+    case 'perf.vital':
+      store.addPerfVital(data as MethodData['perf.vital']);
+      break;
+    case 'perf.longtask':
+      store.addPerfLongtask(data as MethodData['perf.longtask']);
+      break;
+    case 'perf.memory':
+      store.addPerfMemory(data as MethodData['perf.memory']);
+      break;
+    case 'perf.fps':
+      store.addPerfFps(data as MethodData['perf.fps']);
       break;
     case 'dom.rrweb': {
       const d = data as MethodData['dom.rrweb'];

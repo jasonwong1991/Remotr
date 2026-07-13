@@ -17,6 +17,7 @@ const ZOOM_LEVELS = [0.25, 0.5, 0.75, 1, 1.5, 2] as const;
 
 export default function PageMirror(): React.ReactElement {
   const rrwebEvents = useStore((s) => s.rrwebEvents);
+  const rrwebDropped = useStore((s) => s.rrwebDropped);
   const t = useT();
   const pickerActive = useStore((s) => s.pickerActive);
   const selectedNodeId = useStore((s) => s.selectedNodeId);
@@ -24,7 +25,10 @@ export default function PageMirror(): React.ReactElement {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const replayerRef = useRef<InstanceType<typeof Replayer> | null>(null);
-  const processedCountRef = useRef(0);
+  // 逻辑游标:已喂入 Replayer 的事件总数(跨裁剪保持单调递增)。
+  // store 会在快照边界裁剪 rrwebEvents 头部,数组下标因此会左移;用
+  // rrwebDropped 把逻辑游标换算成当前数组下标,使增量喂入不受裁剪影响。
+  const processedLogicalRef = useRef(0);
   const hasFullSnapshotRef = useRef(false);
   const treeRafRef = useRef<number | null>(null);
   const [ready, setReady] = React.useState(false);
@@ -46,7 +50,7 @@ export default function PageMirror(): React.ReactElement {
       // ignore
     }
     replayerRef.current = null;
-    processedCountRef.current = 0;
+    processedLogicalRef.current = 0;
     hasFullSnapshotRef.current = false;
     if (treeRafRef.current != null) {
       cancelAnimationFrame(treeRafRef.current);
@@ -170,13 +174,17 @@ export default function PageMirror(): React.ReactElement {
       return;
     }
 
-    const newEvents = events.slice(processedCountRef.current);
-    if (newEvents.length === 0) return;
+    // 把逻辑游标换算成当前数组下标(store 裁剪头部后下标左移)。
+    // 若头部裁剪把尚未喂入的事件也丢弃了(硬上限兜底场景),下标会为负,
+    // 夹到 0——丢失的增量会在下一个 checkout 段随全量快照重建。
+    const startIdx = Math.max(0, processedLogicalRef.current - rrwebDropped);
+    if (startIdx >= events.length) return;
 
     // Whether this batch changed the DOM tree shape and warrants a rebuild.
     let structural = false;
 
-    for (const event of newEvents) {
+    for (let i = startIdx; i < events.length; i++) {
+      const event = events[i];
       const ev = event as { type?: number; data?: { source?: number } };
 
       if (ev.type === FULL_SNAPSHOT_TYPE) {
@@ -199,7 +207,7 @@ export default function PageMirror(): React.ReactElement {
             replayerRef.current = null;
           }
 
-          const initEvents = events.slice(0, processedCountRef.current + newEvents.indexOf(event) + 1);
+          const initEvents = events.slice(0, i + 1);
           try {
             replayerRef.current = new Replayer(initEvents, {
               root: containerRef.current,
@@ -246,11 +254,12 @@ export default function PageMirror(): React.ReactElement {
       }
     }
 
-    processedCountRef.current = events.length;
+    // 逻辑游标推进到"已消费事件总数" = 裁剪掉的 + 当前数组长度。
+    processedLogicalRef.current = rrwebDropped + events.length;
 
     // Rebuild the Elements tree once per batch when the DOM actually changed.
     if (structural) scheduleTreePublish();
-  }, [resetReplayer, rrwebEvents, scheduleTreePublish]);
+  }, [resetReplayer, rrwebEvents, rrwebDropped, scheduleTreePublish]);
 
   useEffect(() => resetReplayer, [resetReplayer]);
 
