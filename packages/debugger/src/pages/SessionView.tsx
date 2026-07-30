@@ -85,7 +85,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
       '',
       t('mcp.promptConfigNote'),
       '```json',
-      `"remotr": { "command": "node", "args": ["<remotr-repo>/packages/mcp/dist/cli.js", "--server", "${server}", "--room", "${room}"] }`,
+      `"remotr": { "type": "http", "url": "${server}/mcp?room=${encodeURIComponent(room)}" }`,
       '```',
     ];
     await copyToClipboard(lines.join('\n'));

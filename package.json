@@ -12,7 +12,7 @@
     "packages/mcp"
   ],
   "scripts": {
-    "build": "npm run build -w @remotr/shared && npm run build -w @remotr/sourcemap && npm run build -w @remotr/sdk && npm run build -w @remotr/debugger && npm run build -w @remotr/server && npm run build -w @remotr/mcp",
+    "build": "npm run build -w @remotr/shared && npm run build -w @remotr/sourcemap && npm run build -w @remotr/sdk && npm run build -w @remotr/debugger && npm run build -w @remotr/mcp && npm run build -w @remotr/server",
     "build:sdk": "npm run build -w @remotr/sdk",
     "build:debugger": "npm run build -w @remotr/debugger",
     "dev:debugger": "npm run dev -w @remotr/debugger",

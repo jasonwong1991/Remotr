@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { decodeFrame, KNOWN_METHODS, type MethodName } from '@remotr/shared';
+import { handleMcpHttp } from '@remotr/mcp';
 import { RoomRegistry } from './room.js';
 import { RecordingManager, loadRecordingConfig, type RecordingConfig } from './recording.js';
 
@@ -35,11 +36,20 @@ export function startServer(opts: ServerOptions) {
   const rooms = new RoomRegistry(recorder);
 
   const httpServer = createServer((req, res) => {
-    handleHttp(req, res, opts, rooms, recorder).catch((err) => {
+    handleHttp(req, res, opts, rooms, recorder, mcpLoopback).catch((err) => {
       res.writeHead(500);
       res.end(String(err));
     });
   });
+
+  // MCP 自环地址：工具调用经 loopback 回连本机，复用 HTTP+WS 链路。
+  // 端口取实际绑定值（支持 port: 0 随机端口）；通配地址回退到 127.0.0.1。
+  const mcpLoopback = (): string => {
+    const addr = httpServer.address();
+    const port = addr && typeof addr === 'object' ? addr.port : opts.port;
+    const host = opts.host === '0.0.0.0' || opts.host === '::' ? '127.0.0.1' : opts.host;
+    return `http://${host}:${port}`;
+  };
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -59,6 +69,7 @@ export function startServer(opts: ServerOptions) {
     console.log(`\n  Remotr server running`);
     console.log(`  ├─ 调试面板:   ${base}/`);
     console.log(`  ├─ 注入脚本:   ${base}/remotr.js`);
+    console.log(`  ├─ MCP (HTTP): ${base}/mcp`);
     console.log(`  └─ WebSocket:  ws://${opts.host}:${opts.port}/ws\n`);
     console.log(`  在目标页面注入:`);
     console.log(
@@ -156,12 +167,21 @@ async function handleHttp(
   opts: ServerOptions,
   rooms: RoomRegistry,
   recorder: RecordingManager,
+  mcpLoopback: () => string,
 ): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
   let pathname = decodeURIComponent(url.pathname);
 
   // CORS：注入脚本可能被任意源页面加载
   res.setHeader('Access-Control-Allow-Origin', '*');
+
+  // MCP over Streamable HTTP：客户端零本地依赖，直接 POST 到 /mcp。
+  // 换房间用 query：/mcp?room=teamA
+  if (pathname === '/mcp') {
+    const room = url.searchParams.get('room') || 'default';
+    await handleMcpHttp(req, res, { serverUrl: mcpLoopback(), room });
+    return;
+  }
 
   // 房间列表 API
   if (pathname === '/api/rooms') {

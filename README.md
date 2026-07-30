@@ -112,7 +112,7 @@ Six packages sharing a typed protocol via `@remotr/shared`:
 | `packages/server`   | Relay server (Node + ws), hosts panel and injection script |
 | `packages/debugger` | Debug panel (React + Vite + Zustand + rrweb Replayer) |
 | `packages/sourcemap`| Pure source-map resolver (source-map-js); turns minified `bundle:line:col` into original source + snippet. Shared by panel and MCP. |
-| `packages/mcp`      | MCP server (stdio) exposing live errors + resolved stacks + context to Claude Code |
+| `packages/mcp`      | MCP server (Streamable HTTP at `/mcp` on the relay + stdio CLI) exposing live errors + resolved stacks + context to Claude Code |
 
 ### AI-Assisted Error Fixing
 
@@ -133,7 +133,7 @@ Remotr can hand a runtime error — resolved back to your original source — to
               │
    ┌──────────┴───────────────────────────────┐
    ▼                                           ▼
- Sources panel + Console "resolve"      @remotr/mcp (stdio MCP server)
+ Sources panel + Console "resolve"      @remotr/mcp (HTTP /mcp + stdio)
  click → jump to original source        tools: list_sessions / get_errors /
                                                 resolve_error / get_context
                                                │
@@ -149,7 +149,7 @@ See **[AI-Assisted Error Fixing](#ai-assisted-error-fixing-mcp)** below for setu
 
 ```bash
 npm install
-npm run build        # Builds shared → sourcemap → sdk → debugger → server → mcp
+npm run build        # Builds shared → sourcemap → sdk → debugger → mcp → server
 ```
 
 ### 2. Start Server
@@ -166,6 +166,7 @@ Output after starting:
   Remotr server running
   ├─ Debug panel:    http://0.0.0.0:9777/
   ├─ Inject script:  http://0.0.0.0:9777/remotr.js
+  ├─ MCP (HTTP):     http://0.0.0.0:9777/mcp
   └─ WebSocket:      ws://0.0.0.0:9777/ws
 ```
 
@@ -346,7 +347,25 @@ Remotr ships an MCP server (`@remotr/mcp`) that lets **Claude Code** read live r
 
 ### Setup
 
-Add the MCP server to your project's `.mcp.json` (or Claude Code MCP config):
+The relay server exposes MCP over **Streamable HTTP** at `/mcp` — no local Node, repo clone, or build needed on the client. Add to your project's `.mcp.json` (or Claude Code MCP config):
+
+```json
+{
+  "mcpServers": {
+    "remotr": {
+      "type": "http",
+      "url": "http://localhost:9777/mcp"
+    }
+  }
+}
+```
+
+Pick a room via query parameter: `http://localhost:9777/mcp?room=teamA` (defaults to `default`).
+
+<details>
+<summary>Alternative: stdio transport (local process)</summary>
+
+If you prefer a local stdio process (e.g. offline against a local build), the CLI is still available:
 
 ```json
 {
@@ -360,6 +379,8 @@ Add the MCP server to your project's `.mcp.json` (or Claude Code MCP config):
 ```
 
 `--server` is the Remotr server URL, `--room` the room to inspect (env `REMOTR_SERVER` / `REMOTR_ROOM` also work).
+
+</details>
 
 ### Tools exposed
 
