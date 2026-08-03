@@ -178,6 +178,14 @@ async function handleHttp(
   // MCP over Streamable HTTP：客户端零本地依赖，直接 POST 到 /mcp。
   // 换房间用 query：/mcp?room=teamA
   if (pathname === '/mcp') {
+    // 无状态服务只接受 POST。GET 会被 SDK 当成 SSE 长连挂起，在反向代理/
+    // 网关（如 Cloudflare）下被空闲超时掐断，触发客户端整体重连 + AbortError
+    // 与 "fetch failed" 级联；直接 405 让客户端退回纯 JSON 请求。
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': MIME['.json'] });
+      res.end(JSON.stringify({ error: 'Method Not Allowed: use POST' }));
+      return;
+    }
     const room = url.searchParams.get('room') || 'default';
     await handleMcpHttp(req, res, { serverUrl: mcpLoopback(), room });
     return;

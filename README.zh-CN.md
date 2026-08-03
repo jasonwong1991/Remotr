@@ -111,7 +111,7 @@
 | `packages/server`   | 中继服务器（Node + ws），托管面板和注入脚本 |
 | `packages/debugger` | 调试面板（React + Vite + Zustand + rrweb Replayer） |
 | `packages/sourcemap`| 纯 Source Map 还原器（source-map-js）；把压缩的 `bundle:line:col` 还原为原始源码 + 片段。面板与 MCP 共用。 |
-| `packages/mcp`      | MCP 服务器（stdio），把实时报错 + 还原堆栈 + 上下文暴露给 Claude Code |
+| `packages/mcp`      | MCP 服务器（中继上的 Streamable HTTP `/mcp` + stdio CLI），把实时报错 + 还原堆栈 + 上下文暴露给 Claude Code |
 
 ### AI 辅助报错修复
 
@@ -132,7 +132,7 @@ Remotr 可以把运行时报错——还原回你的原始源码——通过 MCP
               │
    ┌──────────┴───────────────────────────────┐
    ▼                                           ▼
- Sources 面板 + Console「还原源码」       @remotr/mcp（stdio MCP 服务）
+ Sources 面板 + Console「还原源码」       @remotr/mcp（HTTP /mcp + stdio）
  点击 → 跳转到原始源码                     工具: list_sessions / get_errors /
                                                 resolve_error / get_context
                                                │
@@ -148,7 +148,7 @@ Remotr 可以把运行时报错——还原回你的原始源码——通过 MCP
 
 ```bash
 npm install
-npm run build        # 构建 shared → sourcemap → sdk → debugger → server → mcp
+npm run build        # 构建 shared → sourcemap → sdk → debugger → mcp → server
 ```
 
 ### 2. 启动服务器
@@ -165,6 +165,7 @@ node packages/server/dist/cli.js --port 9777 --host 0.0.0.0
   Remotr server running
   ├─ Debug panel:    http://0.0.0.0:9777/
   ├─ Inject script:  http://0.0.0.0:9777/remotr.js
+  ├─ MCP (HTTP):     http://0.0.0.0:9777/mcp
   └─ WebSocket:      ws://0.0.0.0:9777/ws
 ```
 
@@ -328,7 +329,25 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 
 ### 配置
 
-在项目的 `.mcp.json`（或 Claude Code 的 MCP 配置）中加入：
+中继服务器在 `/mcp` 上以 **Streamable HTTP** 暴露 MCP —— 客户端无需本地 Node、克隆仓库或构建产物。在项目的 `.mcp.json`（或 Claude Code 的 MCP 配置）中加入：
+
+```json
+{
+  "mcpServers": {
+    "remotr": {
+      "type": "http",
+      "url": "http://localhost:9777/mcp"
+    }
+  }
+}
+```
+
+用 query 参数选择房间：`http://localhost:9777/mcp?room=teamA`（默认 `default`）。
+
+<details>
+<summary>备选：stdio 传输（本地进程）</summary>
+
+若倾向本地 stdio 进程（例如离线对着本地构建调试），CLI 仍然可用：
 
 ```json
 {
@@ -342,6 +361,8 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 ```
 
 `--server` 是 Remotr 服务器地址，`--room` 是要检查的房间（也可用环境变量 `REMOTR_SERVER` / `REMOTR_ROOM`）。
+
+</details>
 
 ### 暴露的工具
 
