@@ -68,7 +68,8 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
     }
   }, []);
 
-  // 复制 MCP 对接所需内容 + 提示词，粘贴给 Claude Code 即可定位并修复本页报错
+  // 复制 MCP 对接所需内容 + 提示词，粘贴给 Claude Code 即可定位并修复本页报错。
+  // 配置片段刻意不带 ?room=：房间名作为工具入参逐次传入，换房间不必再改 mcp.json。
   const handleCopyMcp = useCallback(async () => {
     const server = window.location.origin;
     const url = useStore.getState().systemInfo?.url;
@@ -85,8 +86,9 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
       '',
       t('mcp.promptConfigNote'),
       '```json',
-      `"remotr": { "type": "http", "url": "${server}/mcp?room=${encodeURIComponent(room)}" }`,
+      `"remotr": { "type": "http", "url": "${server}/mcp" }`,
       '```',
+      t('mcp.promptConfigStable'),
     ];
     await copyToClipboard(lines.join('\n'));
     setMcpCopied(true);

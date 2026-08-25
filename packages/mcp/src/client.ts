@@ -51,14 +51,26 @@ export interface TraceHitRecord {
   timestamp: number;
 }
 
+/** /api/rooms 的一项：房间及其活跃度概览 */
+export interface RoomSummary {
+  id: string;
+  hasSdk: boolean;
+  debuggers: number;
+  sessions: number;
+}
+
 /**
  * RemotrClient — 以 headless debugger 身份接入 Remotr server。
  * 列 session 走 HTTP（轻量、无状态）；查具体 session 走短连 WS（收 backlog + 发命令）。
+ *
+ * room 的解析策略：构造时传入的 defaultRoom 只是兜底（来自 /mcp?room= 或 --room），
+ * 每次调用可以用参数覆盖。这样一份不带 ?room= 的 MCP 配置就能跨房间复用，
+ * 换房间不必改 mcp.json —— 房间名由调用方（AI）从「复制给 AI 修复」的上下文里带进来。
  */
 export class RemotrClient {
   constructor(
     private readonly serverUrl: string,
-    private readonly room: string,
+    private readonly defaultRoom: string,
   ) {}
 
   private httpBase(): string {
@@ -71,16 +83,27 @@ export class RemotrClient {
     return `${proto}//${u.host}/ws`;
   }
 
-  async listSessions(): Promise<SessionSnapshot[]> {
-    const url = `${this.httpBase()}/api/rooms/${encodeURIComponent(this.room)}/sessions`;
+  /** 入参 room 优先，空/缺省则回落到配置里的默认房间 */
+  resolveRoom(room?: string): string {
+    return room && room.trim() ? room.trim() : this.defaultRoom;
+  }
+
+  async listRooms(): Promise<RoomSummary[]> {
+    const res = await fetch(`${this.httpBase()}/api/rooms`);
+    if (!res.ok) throw new Error(`listRooms HTTP ${res.status}`);
+    return (await res.json()) as RoomSummary[];
+  }
+
+  async listSessions(room?: string): Promise<SessionSnapshot[]> {
+    const url = `${this.httpBase()}/api/rooms/${encodeURIComponent(this.resolveRoom(room))}/sessions`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`listSessions HTTP ${res.status}`);
     const data = (await res.json()) as { sessions?: SessionSnapshot[] };
     return data.sessions ?? [];
   }
 
-  connectSession(session: SessionId): Promise<SessionConnection> {
-    return SessionConnection.open(this.wsBase(), this.room, session);
+  connectSession(session: SessionId, room?: string): Promise<SessionConnection> {
+    return SessionConnection.open(this.wsBase(), this.resolveRoom(room), session);
   }
 }
 

@@ -13,17 +13,37 @@ const MAX_OUTPUT = 50_000;
 /** 源码片段半径：命中行 ± 该行数，约 10 行以内（R6）。 */
 const SNIPPET_RADIUS = 5;
 
+/**
+ * room 作为每个工具的可选入参：配置里的 /mcp 不必带 ?room=，
+ * 房间名由「复制给 AI 修复」的上下文（`- room: xxx`）带进来，逐次调用传参。
+ * 省略时回落到服务端配置的默认房间，兼容既有的 ?room= / --room 用法。
+ */
+const ROOM_PROP = {
+  room: {
+    type: 'string',
+    description:
+      'Room name. Take it from the pasted Remotr context line "- room: xxx". Omit only if your MCP URL already pins a room (…/mcp?room=…). Use remotr_list_rooms to discover it.',
+  },
+} as const;
+
 const SESSION_PROPS = {
+  ...ROOM_PROP,
   deviceId: { type: 'string', description: 'Target session deviceId (from remotr_list_sessions)' },
   pageId: { type: 'string', description: 'Target session pageId (from remotr_list_sessions)' },
 } as const;
 
 const TOOLS: Tool[] = [
   {
+    name: 'remotr_list_rooms',
+    description:
+      'List all active rooms on the server with their session counts. Use this when you do not know the room name (or the pasted context has none) before calling remotr_list_sessions.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'remotr_list_sessions',
     description:
-      'List live debugging sessions in the room (deviceId, pageId, URL, framework). Call this first to discover targets.',
-    inputSchema: { type: 'object', properties: {} },
+      'List live debugging sessions in a room (deviceId, pageId, URL, framework). Call this first to discover targets.',
+    inputSchema: { type: 'object', properties: { ...ROOM_PROP } },
   },
   {
     name: 'remotr_get_errors',
@@ -154,9 +174,10 @@ function trimSnippet(frame: ResolvedFrameOut): ResolvedFrameOut {
 async function withSession<T>(
   client: RemotrClient,
   session: SessionId,
+  room: string | undefined,
   fn: (conn: SessionConnection) => Promise<T>,
 ): Promise<T> {
-  const conn = await client.connectSession(session);
+  const conn = await client.connectSession(session, room);
   try {
     await conn.waitForBacklog();
     return await fn(conn);
@@ -170,10 +191,17 @@ async function dispatch(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
+  // 房间名逐次调用传入，缺省由 client 回落到配置里的默认房间
+  const room = typeof args.room === 'string' ? args.room : undefined;
   switch (name) {
+    case 'remotr_list_rooms': {
+      const rooms = await client.listRooms();
+      return { count: rooms.length, rooms };
+    }
     case 'remotr_list_sessions': {
-      const sessions = await client.listSessions();
+      const sessions = await client.listSessions(room);
       return {
+        room: client.resolveRoom(room),
         count: sessions.length,
         sessions: sessions.map((s) => ({
           deviceId: s.session.deviceId,
@@ -189,7 +217,7 @@ async function dispatch(
 
     case 'remotr_get_errors': {
       const session = sessionFromArgs(args);
-      return withSession(client, session, async (conn) => {
+      return withSession(client, session, room, async (conn) => {
         const errors = conn.errors();
         return {
           count: errors.length,
@@ -212,7 +240,7 @@ async function dispatch(
     case 'remotr_resolve_error': {
       const session = sessionFromArgs(args);
       const errorIndex = Number(args.errorIndex ?? 0);
-      return withSession(client, session, async (conn) => {
+      return withSession(client, session, room, async (conn) => {
         const errors = conn.errors();
         const err = errors[errorIndex];
         if (!err) throw new Error(`No error at index ${errorIndex} (have ${errors.length})`);
@@ -225,7 +253,7 @@ async function dispatch(
     case 'remotr_get_context': {
       const session = sessionFromArgs(args);
       const errorIndex = Number(args.errorIndex ?? 0);
-      return withSession(client, session, async (conn) => {
+      return withSession(client, session, room, async (conn) => {
         const errors = conn.errors();
         const err = errors[errorIndex];
         if (!err) throw new Error(`No error at index ${errorIndex} (have ${errors.length})`);
@@ -253,7 +281,7 @@ async function dispatch(
     case 'remotr_diagnose': {
       const session = sessionFromArgs(args);
       const errorIndex = Number(args.errorIndex ?? 0);
-      return withSession(client, session, async (conn) => {
+      return withSession(client, session, room, async (conn) => {
         const errors = conn.errors();
         const err = errors[errorIndex];
         if (!err) throw new Error(`No error at index ${errorIndex} (have ${errors.length})`);
@@ -286,7 +314,7 @@ async function dispatch(
       const session = sessionFromArgs(args);
       const expression = String(args.expression ?? '');
       if (!expression) throw new Error('expression is required');
-      return withSession(client, session, async (conn) => {
+      return withSession(client, session, room, async (conn) => {
         const reply = (await conn.sendCommand('eval.run', { code: expression })) as EvalRunResult;
         const atom = reply?.result;
         const threw = atom?.type === 'error';
@@ -307,7 +335,7 @@ async function dispatch(
       if (!path) throw new Error('functionPath is required');
       const condition = args.condition != null ? String(args.condition) : undefined;
       const id = `tp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      return withSession(client, session, async (conn) => {
+      return withSession(client, session, room, async (conn) => {
         const reply = (await conn.sendCommand('trace.set', {
           tracepoint: { id, path, condition },
         })) as TraceSetResult;
@@ -327,7 +355,7 @@ async function dispatch(
       const session = sessionFromArgs(args);
       const tracepointId = args.tracepointId != null ? String(args.tracepointId) : undefined;
       const limit = Number(args.limit ?? 20);
-      return withSession(client, session, async (conn) => {
+      return withSession(client, session, room, async (conn) => {
         const hits = conn.traceHits(limit, tracepointId);
         return {
           count: hits.length,

@@ -342,7 +342,9 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 }
 ```
 
-用 query 参数选择房间：`http://localhost:9777/mcp?room=teamA`（默认 `default`）。
+房间是**按每次工具调用**指定的，不写在配置里：给任意 `remotr_*` 工具传 `room` 参数即可（「复制给 AI 修复」按钮会把房间名放进粘贴的上下文里）。这样上面这段 URL 是稳定的——换房间不需要改 `.mcp.json`。不知道房间名时调用 `remotr_list_rooms`。
+
+也仍可用 query 参数固定一个默认房间：`http://localhost:9777/mcp?room=teamA`（默认 `default`），在调用未传 `room` 时生效。
 
 <details>
 <summary>备选：stdio 传输（本地进程）</summary>
@@ -368,6 +370,7 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 
 | 工具 | 用途 |
 |------|------|
+| `remotr_list_rooms` | 列出活跃房间及各自会话数。不知道房间名时用它。 |
 | `remotr_list_sessions` | 列出在线会话（deviceId、pageId、url、框架、identity）。先调用它找到目标。 |
 | `remotr_get_errors` | 某会话的近期报错（未捕获错误、未处理 Promise 拒绝、console.error），带原始堆栈。 |
 | `remotr_resolve_error` | 通过 Source Map 把某条报错的堆栈逐帧还原为原始 `file:line` + 源码片段。 |

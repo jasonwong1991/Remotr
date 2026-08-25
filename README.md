@@ -360,7 +360,9 @@ The relay server exposes MCP over **Streamable HTTP** at `/mcp` — no local Nod
 }
 ```
 
-Pick a room via query parameter: `http://localhost:9777/mcp?room=teamA` (defaults to `default`).
+Rooms are chosen **per tool call**, not per config: pass `room` to any `remotr_*` tool (the "Copy for AI fix" button puts the room name in the pasted context). This keeps the URL above stable — switching rooms never requires editing `.mcp.json`. Call `remotr_list_rooms` if you don't know the room name.
+
+You can still pin a default with a query parameter — `http://localhost:9777/mcp?room=teamA` (defaults to `default`) — which applies whenever a call omits `room`.
 
 <details>
 <summary>Alternative: stdio transport (local process)</summary>
@@ -386,6 +388,7 @@ If you prefer a local stdio process (e.g. offline against a local build), the CL
 
 | Tool | Purpose |
 |------|---------|
+| `remotr_list_rooms` | List active rooms with session counts. Use when the room name is unknown. |
 | `remotr_list_sessions` | List live sessions (deviceId, pageId, url, framework, identity). Call first to find a target. |
 | `remotr_get_errors` | Recent errors for a session (uncaught errors, unhandled rejections, console.error) with raw stacks. |
 | `remotr_resolve_error` | Resolve one error's stack to original `file:line` + code snippet per frame via source maps. |
