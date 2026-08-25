@@ -74,6 +74,11 @@ const en = {
   'session.reloadTitle': 'Reload remote page (Shift+Click for hard reload)',
   'session.reload': '⟳ Reload',
   'session.pageMirror': 'Page Mirror',
+  'session.targetOnline': 'Device online',
+  'session.targetOffline': 'Device offline',
+  'session.reloadOfflineTitle': 'Target device is offline — commands are unavailable until it reconnects',
+  'session.offlineBanner':
+    'Target device is offline. Panels below still render the last recorded state, but console eval, storage writes, element edits, tracepoints and reload will all fail until it reconnects.',
   // ── main tabs (SessionView) ─────────────────────────────
   'tab.console': 'console',
   'tab.network': 'network',
@@ -359,6 +364,11 @@ const zh: Record<MessageKey, string> = {
   'session.reloadTitle': '重新加载远程页面（Shift+点击强制刷新）',
   'session.reload': '⟳ 重新加载',
   'session.pageMirror': '页面镜像',
+  'session.targetOnline': '设备在线',
+  'session.targetOffline': '设备已离线',
+  'session.reloadOfflineTitle': '目标设备已离线，重连后才能执行命令',
+  'session.offlineBanner':
+    '目标设备已离线。下方面板展示的仍是最后一次记录的状态，但 console 求值、storage 写入、元素修改、tracepoint 与重新加载在设备重连前都会失败。',
   'tab.console': '控制台',
   'tab.network': '网络',
   'tab.elements': '元素',

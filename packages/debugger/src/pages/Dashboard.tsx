@@ -510,6 +510,8 @@ function SessionGroups({
 function SessionCard({ session, room }: { session: SessionSnapshot; room: string }): React.ReactElement {
   const t = useT();
   const handleClick = () => {
+    // 离线 session 无法接受命令，样式已置灰（not-allowed），点击也应拦截
+    if (!session.connected) return;
     navigateToSession(room, session.session.deviceId, session.session.pageId);
   };
 

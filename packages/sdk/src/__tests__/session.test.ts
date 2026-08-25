@@ -69,15 +69,25 @@ describe('lowestFreeSlot', () => {
 describe('getPageId / getDeviceId integration (jsdom)', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     // jsdom 默认 location = http://localhost/
   });
 
-  it('getPageId is deterministic for the same URL within a device', () => {
-    // 注意：claimPageSlot 会占用 base slot 并保持心跳，因此第二次调用（模拟另一个
-    // 并发标签页）会顺延到 base-2，验证并发区分生效。
+  it('same tab reloading keeps the same pageId (slot 备忘录生效)', () => {
+    // 重载场景：sessionStorage 保留（同标签页），localStorage 里旧 slot 的心跳仍新鲜
+    // ——这正是 pagehide/beforeunload 未触发时的状态。必须拿回原 slot，
+    // 否则 pageId 漂移到 base-2，Debugger 仍钉在 base 上，命令全部失效。
     const first = getPageId();
     expect(first).toMatch(/^page_/);
-    const second = getPageId(); // 模拟同 URL 第二个标签页
+    const afterReload = getPageId();
+    expect(afterReload).toBe(first);
+  });
+
+  it('a second concurrent tab gets the next slot', () => {
+    const first = getPageId();
+    // 新标签页有自己的空 sessionStorage，但共享 localStorage 里的标签页注册表
+    sessionStorage.clear();
+    const second = getPageId();
     expect(second).not.toBe(first);
     expect(second.startsWith(first)).toBe(true); // base-2 形如 base 前缀
   });

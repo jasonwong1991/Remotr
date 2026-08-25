@@ -161,6 +161,8 @@ export class Room {
     this.sdks.set(key, member);
     // 清除离线记录
     this.offlineSessions.delete(key);
+    // 通知正在调试该 session 的 Debugger：目标已上线
+    this.notifySessionStatus(session, true);
     return member;
   }
 
@@ -201,6 +203,9 @@ export class Room {
       // 标记为离线，但保留 backlog
       this.offlineSessions.set(key, this.buildSessionSnapshot(member, false));
 
+      // 通知正在调试该 session 的 Debugger：目标已掉线
+      this.notifySessionStatus(member.session, false);
+
       // 关闭该会话的录制段，刷新落盘
       this.recorder?.closeSession(this.id, member.session);
     } else {
@@ -221,6 +226,18 @@ export class Room {
     }
 
     const key = sessionKey(member.targetSession);
+
+    // 先告知目标 session 当前的真实在线状态（backlog 回放会让离线 session 看起来"活着"）
+    const sdk = this.sdks.get(key);
+    const connected = !!sdk && sdk.ws.readyState === sdk.ws.OPEN;
+    safeSend(
+      member.ws,
+      encodeFrame({
+        kind: 'msg',
+        envelope: makeEnvelope('session.status', { session: member.targetSession, connected }, 'debugger'),
+      }),
+    );
+
     const backlog = this.backlogs.get(key);
     if (!backlog) return;
 
@@ -326,6 +343,18 @@ export class Room {
     }
 
     sdk.ws.send(raw);
+  }
+
+  /** 向订阅了指定 session 的 Debugger 推送目标在线状态变更 */
+  private notifySessionStatus(session: SessionParams, connected: boolean): void {
+    const target: SessionId = { deviceId: session.deviceId, pageId: session.pageId };
+    const raw = encodeFrame({
+      kind: 'msg',
+      envelope: makeEnvelope('session.status', { session: target, connected }, 'debugger'),
+    });
+    for (const dbg of this.debuggers) {
+      if (sameSession(dbg.targetSession, target)) safeSend(dbg.ws, raw);
+    }
   }
 
   private replyError(to: DebuggerMember, frame: Frame, error: string): void {

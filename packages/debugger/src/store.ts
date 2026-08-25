@@ -121,6 +121,8 @@ export interface SourceViewTarget {
 
 interface DebuggerState {
   connStatus: ConnStatus;
+  /** 目标 session 是否在线；null = 尚未收到服务端 session.status（旧版 server 或 Dashboard 模式） */
+  targetOnline: boolean | null;
   systemInfo: SystemInfoEvent | null;
   consoleRecords: ConsoleRecord[];
   traceHits: TraceHitRecord[];
@@ -157,6 +159,7 @@ interface DebuggerState {
 
   // Actions
   setConnStatus: (s: ConnStatus) => void;
+  setTargetOnline: (v: boolean | null) => void;
   setSystemInfo: (info: SystemInfoEvent) => void;
   addConsoleEntry: (entry: ConsoleEvent, ts: number) => void;
   addPageError: (err: PageErrorEvent, ts: number) => void;
@@ -289,6 +292,7 @@ function patchWsConn(
 
 export const useStore = create<DebuggerState>((set) => ({
   connStatus: 'connecting',
+  targetOnline: null,
   systemInfo: null,
   consoleRecords: [],
   traceHits: [],
@@ -312,6 +316,7 @@ export const useStore = create<DebuggerState>((set) => ({
   sourceView: null,
 
   setConnStatus: (connStatus) => set({ connStatus }),
+  setTargetOnline: (targetOnline) => set({ targetOnline }),
   setSystemInfo: (systemInfo) => set({ systemInfo }),
 
   addConsoleEntry: (entry, ts) =>
@@ -571,6 +576,7 @@ export const useStore = create<DebuggerState>((set) => ({
   reset: () =>
     set({
       connStatus: 'connecting',
+      targetOnline: null,
       systemInfo: null,
       consoleRecords: [],
       traceHits: [],

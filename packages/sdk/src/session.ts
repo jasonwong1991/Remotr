@@ -23,6 +23,20 @@ function internalSetItem(key: string, value: string): void {
   else localStorage.setItem(key, value);
 }
 
+/** 同 rawSetItem，但针对 sessionStorage（slot 备忘录用，storage 插件同样 hook 了它）。 */
+const rawSessionSetItem: ((key: string, value: string) => void) | null = (() => {
+  try {
+    return sessionStorage.setItem.bind(sessionStorage);
+  } catch {
+    return null;
+  }
+})();
+
+function internalSessionSetItem(key: string, value: string): void {
+  if (rawSessionSetItem) rawSessionSetItem(key, value);
+  else sessionStorage.setItem(key, value);
+}
+
 /** slot 心跳 teardown（由 claimPageSlot 设置，stopSession 调用）。 */
 let slotHeartbeatTeardown: (() => void) | null = null;
 
@@ -159,28 +173,83 @@ function readRegistry(regKey: string): TabRegistry {
 }
 
 /**
+ * 本标签页上次认领到的 slot 备忘录（sessionStorage：跨 reload 存活、关标签页即失效）。
+ *
+ * 为什么需要它：release() 只绑在 pagehide/beforeunload 上，移动端 WebView 重载时
+ * 这两个事件都不保证触发。于是重载后旧 slot 的心跳仍在 STALE_MS(10s) 新鲜期内，
+ * lowestFreeSlot 会把本页顺延到 base-2 —— pageId 变了，而 Debugger 还钉在 base 上，
+ * 之后所有命令都会被服务端以 "Target session … is offline" 拒掉，
+ * 但 backlog/rrweb 回放让面板看起来完全正常。备忘录让「同一标签页重载」稳定拿回原 slot。
+ */
+const SLOT_MEMO_PREFIX = '__remotr_slot:';
+
+interface SlotMemo {
+  slot: string;
+  /** 上一次持有该 slot 的 token，用于确认注册表里的残留条目是"我自己" */
+  t: string;
+}
+
+function readSlotMemo(base: string): SlotMemo | null {
+  try {
+    const raw = sessionStorage.getItem(SLOT_MEMO_PREFIX + base);
+    if (!raw) return null;
+    const memo = JSON.parse(raw) as SlotMemo;
+    if (!memo || typeof memo.slot !== 'string' || typeof memo.t !== 'string') return null;
+    return memo;
+  } catch {
+    return null;
+  }
+}
+
+function writeSlotMemo(base: string, memo: SlotMemo): void {
+  try {
+    internalSessionSetItem(SLOT_MEMO_PREFIX + base, JSON.stringify(memo));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * 判断能否重新认领备忘录里的 slot：条目已消失（release 正常触发）、
+ * 已过期，或 token 就是上一次的自己（release 没触发的重载）——这三种都是本页的延续。
+ *
+ * 取舍：浏览器"复制标签页"会连 sessionStorage 一起复制，此时副本会与原标签页
+ * 认领到同一 slot，退化为两个页面共用一个 pageId（录制流交错）。相比"移动端重载后
+ * 命令全失效"，这个代价更小，且在 WebView 场景下不存在复制标签页。
+ */
+function canReclaim(reg: TabRegistry, memo: SlotMemo): boolean {
+  const entry = reg[memo.slot];
+  return entry == null || entry.t === memo.t;
+}
+
+/**
  * 认领一个页面 slot。
  *
  * 同一页面（同 deviceId + 同 URL）单标签页退出重进会复用同一 base，保证 session
  * 连续；当检测到另一个标签页"同时在线"（心跳新鲜）时，后开者顺延到 base-2/base-3…
  * 以避免两个标签页的录制流交错。标签页关闭（pagehide）时释放自己的 slot。
+ *
+ * 重载优先复用本标签页上次的 slot（见 SLOT_MEMO_PREFIX），避免 pageId 漂移。
  */
 function claimPageSlot(base: string): string {
   const regKey = TAB_REGISTRY_PREFIX + base;
   const token = randomId(8);
+  const memo = readSlotMemo(base);
   let slot = base;
   try {
     // 最多重试 5 次以化解并发认领竞争（最后写入者保留该 slot，其余顺延）
     for (let attempt = 0; attempt < 5; attempt++) {
       const now = Date.now();
       const reg = pruneRegistry(readRegistry(regKey), now);
-      slot = lowestFreeSlot(reg, base);
+      // 本标签页重载：优先拿回原 slot，保持 pageId 稳定
+      slot = memo && canReclaim(reg, memo) ? memo.slot : lowestFreeSlot(reg, base);
       reg[slot] = { t: token, ts: now };
       internalSetItem(regKey, JSON.stringify(reg));
       // 并发校验：确认 slot 仍归我；被他人覆盖则换下一个重试
       const after = readRegistry(regKey);
       if (after[slot] && after[slot].t === token) break;
     }
+    writeSlotMemo(base, { slot, t: token });
     slotHeartbeatTeardown = startSlotHeartbeat(regKey, slot, token);
   } catch {
     return base;

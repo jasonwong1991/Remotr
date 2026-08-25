@@ -161,6 +161,13 @@ function handleFrame(raw: string, generation: number): void {
       store.addRrwebEvent(d.event as import('./store').RrwebEventRaw);
       break;
     }
+    case 'session.status': {
+      const d = data as MethodData['session.status'];
+      if (sameSession(_currentSession, d.session)) {
+        store.setTargetOnline(d.connected);
+      }
+      break;
+    }
     case 'elements.picked': {
       const d = data as MethodData['elements.picked'];
       store.setSelectedNode(d.nodeId);
@@ -196,6 +203,9 @@ export function connect(): void {
     if (generation !== _connectionGeneration) return; // Stale connection
     _ws = null;
     useStore.getState().setConnStatus('disconnected');
+    // 自身断连后无从得知目标状态，置回 null（未知），别让状态点继续显示上一次的
+    // "设备在线"。重连后服务端 replayTo 会重新推一次 session.status。
+    useStore.getState().setTargetOnline(null);
     if (!_destroyed) {
       setTimeout(() => connect(), _reconnectDelay);
       _reconnectDelay = Math.min(_reconnectDelay * 2, RECONNECT_MAX_MS);

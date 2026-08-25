@@ -108,6 +108,30 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
     room.replayTo(member);
   }
 
+  // 心跳探活：网络中断往往不发 FIN，连接在服务器侧一直显示 OPEN（"假在线"），
+  // 命令会石沉大海。周期 ping，两个周期无 pong 即 terminate，触发 close →
+  // 正常走离线标记。
+  // 注意范围：pong 由浏览器/WebView 的网络层回，渲染进程被系统冻结时依然会
+  // 正常 pong，因此这里只能识别"链路已死"，识别不了"页面已冻"。
+  let alive = true;
+  ws.on('pong', () => {
+    alive = true;
+  });
+  const heartbeat = setInterval(() => {
+    if (!alive) {
+      ws.terminate();
+      return;
+    }
+    alive = false;
+    try {
+      ws.ping();
+    } catch {
+      /* 连接已损坏，等待 close 事件清理 */
+    }
+  }, 30_000);
+  // unref() 同 RoomRegistry.cleanupTimer：别让心跳 timer 吊住进程退出
+  heartbeat.unref?.();
+
   ws.on('message', (raw: Buffer | string) => {
     try {
       const text = typeof raw === 'string' ? raw : raw.toString('utf-8');
@@ -147,6 +171,7 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
     // 否则 remove() 会被调用两次（第二次身份守卫会挡住，但仍属多余）。
     if (cleanedUp) return;
     cleanedUp = true;
+    clearInterval(heartbeat);
     room.remove(member);
     // 通知 Dashboard 更新（SDK 离开时）
     if (member.role === 'sdk') {

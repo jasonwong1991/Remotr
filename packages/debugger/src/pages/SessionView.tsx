@@ -38,6 +38,7 @@ interface SessionViewProps {
 
 export default function SessionView({ room, deviceId, pageId, onBack }: SessionViewProps): React.ReactElement {
   const connStatus = useStore((s) => s.connStatus);
+  const targetOnline = useStore((s) => s.targetOnline);
   const systemInfo = useStore((s) => s.systemInfo);
   const sourceView = useStore((s) => s.sourceView);
   const t = useT();
@@ -151,8 +152,14 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
 
         <button
           onClick={handleReload}
-          disabled={connStatus !== 'connected' || reloadPending}
-          title={reloadPending ? t('session.reloading') : t('session.reloadTitle')}
+          disabled={connStatus !== 'connected' || reloadPending || targetOnline === false}
+          title={
+            targetOnline === false
+              ? t('session.reloadOfflineTitle')
+              : reloadPending
+                ? t('session.reloading')
+                : t('session.reloadTitle')
+          }
         >
           {reloadPending ? '⟳...' : t('session.reload')}
         </button>
@@ -182,6 +189,24 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
           />
           {t(`status.${connStatus}` as MessageKey)}
         </span>
+
+        {/* 目标设备真实在线状态（与上面的面板自身连接状态是两回事） */}
+        {targetOnline !== null && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: targetOnline ? '#4caf50' : '#f44747',
+                display: 'inline-block',
+              }}
+            />
+            <span style={{ color: targetOnline ? undefined : 'var(--accent-red)' }}>
+              {targetOnline ? t('session.targetOnline') : t('session.targetOffline')}
+            </span>
+          </span>
+        )}
 
         <span style={{ color: 'var(--text-muted)' }}>|</span>
         <span title={`${t('dashboard.room')} ${room}`} style={{ color: 'var(--text-muted)' }}>
@@ -231,6 +256,24 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
           </>
         )}
       </div>
+
+      {/* 目标离线时，所有命令类操作（eval / storage / elements / trace / reload）都会被
+          服务端以 "Target session … is offline" 拒掉。这里用一条横幅统一说明，
+          比在每个面板各自置灰更诚实——面板里的数据来自 backlog 回放，看着是活的。 */}
+      {targetOnline === false && (
+        <div
+          style={{
+            padding: '6px 12px',
+            background: 'var(--bg-secondary)',
+            borderBottom: '1px solid var(--accent-red)',
+            color: 'var(--accent-red)',
+            fontSize: 11,
+            flexShrink: 0,
+          }}
+        >
+          ⚠ {t('session.offlineBanner')}
+        </div>
+      )}
 
       <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div

@@ -268,6 +268,16 @@ export interface DashboardSessionsEvent {
   sessions: SessionSnapshot[];
 }
 
+/**
+ * 目标 session 在线状态（Server → Session 模式 Debugger）。
+ * SDK 上线/掉线时推送，Debugger 接入时也会收到一次当前状态，
+ * 供面板展示目标设备真实在线状态并在离线时禁用命令类操作。
+ */
+export interface SessionStatusEvent {
+  session: SessionId;
+  connected: boolean;
+}
+
 // ─────────────────────────────────────────────────────────
 // 回放录制（HTTP API: /api/rooms/:room/recordings）
 // ─────────────────────────────────────────────────────────
@@ -626,6 +636,7 @@ export interface MethodData {
   'perf.fps': PerfFpsEvent;
   // Dashboard 事件 (Server → debugger)
   'dashboard.sessions': DashboardSessionsEvent;
+  'session.status': SessionStatusEvent;
   // 命令 (debugger → SDK)
   'eval.run': EvalRunCmd;
   'trace.set': TraceSetCmd;
@@ -745,6 +756,7 @@ export const KNOWN_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'elements.picked',
   // Dashboard 事件 (Server → debugger)
   'dashboard.sessions',
+  'session.status',
   // 命令 (debugger → SDK)
   'eval.run',
   'trace.set',
