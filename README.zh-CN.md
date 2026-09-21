@@ -10,9 +10,11 @@
 
 - 🖥️ **页面镜像** — 基于 [rrweb](https://github.com/rrweb-io/rrweb) 实现实时录制和回放，忠实重建远程页面（样式、DOM 增量更新）；支持**手动缩放**(25%–200%)并自动居中
 - 🎮 **控制台** — 拦截 `console.*` + 全局错误/Promise 拒绝；支持**远程执行任意 JS**（eval）
-- 🌐 **网络** — 拦截 `fetch` / `XHR` / `sendBeacon`，显示 URL/状态/时序/请求头/响应体。**WebSocket 与 SSE (EventSource) 抓包** — 每条连接及其帧日志（方向、大小、载荷预览）。支持**复制为 cURL**、**导出 HAR 1.2**、以及按资源类型过滤。
-- 📈 **性能** — 核心 Web Vitals（FCP / LCP / CLS / TTFB，带 good/needs-improvement/poor 评级）、长任务列表，以及实时 JS 堆内存 + FPS 迷你折线图。基于 `PerformanceObserver`，对老旧 WebView 全量特性检测。
+- 🌐 **网络** — 拦截 `fetch` / `XHR` / `sendBeacon`（URL/状态/时序/请求头/响应体），并像 DevTools 一样列出页面加载的**全部**资源：文档本身、SDK 运行前就已加载的 `<head>` CSS/JS、图片、字体、加载失败的标签，基于 buffered Resource Timing，浏览器暴露真实状态码时直接采用。**WebSocket 与 SSE (EventSource) 抓包** — 每条连接及其帧日志（方向、大小、载荷预览）。支持**复制为 cURL**、**导出 HAR 1.2**、以及按资源类型过滤。
+- 📈 **性能** — 核心 Web Vitals（FCP / LCP / CLS / TTFB，带 good/needs-improvement/poor 评级）、长任务列表，以及实时 JS 堆内存 + FPS 迷你折线图（仅在有面板连着时采样，无人观看的会话不产生噪声）。基于 `PerformanceObserver`，对老旧 WebView 全量特性检测。
 - 🧬 **元素** — 从 rrweb 镜像实时重建 DOM 树（隐藏/删除/编辑即时反映）；DevTools 风格右键菜单：复制 selector/XPath/JS-path/outerHTML，强制伪类（`:hover`/`:focus`/…），隐藏/编辑 HTML/删除，滚动到视图；查看并编辑匹配规则、计算样式、盒模型；元素拾取器
+- ⚛️ **组件检查（React / Vue）** — 在镜像中选中任意元素，元素面板的 **Component** 子页即显示其所属框架组件：组件名、框架徽标、祖先链、**props** 与 **state**（React hooks / 类组件 state、Vue 3 setup/data、Vue 2 `$data`）。面板打开期间 props/state **实时刷新**（可暂停），已展开的节点保持不收起。读取的是 React/Vue DevTools 同样依赖的 DOM 挂载 fiber/实例——应用侧零配置，逐元素识别，混用多框架的页面也能用。
+- 🎯 **函数追踪点** — 按点分路径（如 `app.store.dispatch`）追踪任何全局可达的函数，不暂停执行。每次调用上报**参数 / 返回值 / 抛出的错误 / 调用栈 / 耗时**，序列化方式与 console 对象一致。可选条件表达式（可引用 `args` / `ret`）过滤噪声调用点——注入式调试里断点的无暂停替代品。
 - 💾 **存储** — 查看、编辑和删除 localStorage / sessionStorage / Cookies（双向）
 - 🗺️ **源码与 Source Map** — 浏览页面加载的脚本；由同源的 SDK 代取脚本与 `.map` 文件（绕开面板跨域），把压缩堆栈还原为原始 `src/Foo.tsx:42` 并附带源码片段。控制台报错带「还原源码」按钮，一键跳转到原始代码行。
 - 🤖 **AI 辅助调试（MCP）** — 内置 MCP 服务器让 **Claude Code** 既能**读取**也能**驱动**实时会话。读取侧：实时报错、Source Map 还原堆栈、console/network 上下文。**操作侧：`remotr_run_eval`**（在页面中执行 JS）、**`remotr_set_tracepoint` / `remotr_get_tracepoint_hits`**（下无暂停埋点并读取命中）、以及 **`remotr_diagnose`**（一次调用 → 报错 + 还原堆栈 + 片段 + console/network 时间线 + 推断原因）。会话视图里一个「复制给 AI 修复」按钮把所需一切交给 Claude。优雅降级：没有 Source Map 也能用。
@@ -234,11 +236,15 @@ REMOTR.start({
 
 ### 4. 打开调试面板
 
-**仪表盘**（查看所有会话）：
+**首页**（所有项目）：
 ```
 http://<your-IP>:9777/
-或
-http://<your-IP>:9777/#/dashboard?room=default
+```
+列出当前所有活跃项目（即注入脚本的 `data-room` 值）及在线/总会话数。点击卡片进入该项目的仪表盘；也可直接输入项目名打开一个尚无连接的项目（获取注入代码）。
+
+**仪表盘**（某个项目的所有会话）：
+```
+http://<your-IP>:9777/#/dashboard?project=default
 ```
 
 功能：
@@ -249,10 +255,12 @@ http://<your-IP>:9777/#/dashboard?room=default
 
 **会话调试**（调试特定页面）：
 ```
-http://<your-IP>:9777/#/session?room=default&deviceId=xxx&pageId=yyy
+http://<your-IP>:9777/#/session?project=default&deviceId=xxx&pageId=yyy
 ```
 
-在会话视图中点击"← 仪表盘"按钮返回。
+在会话视图中点击"← 仪表盘"按钮返回。顶栏被截断的页面 URL 点一下即可复制完整地址。顶部各面板标签（控制台 / 网络 / 元素 / …）可**拖动排序**，顺序记在 `localStorage` 里（↺ 恢复默认）。
+
+> 旧的 `?room=` 链接仍然可用；`project` 只是面板对服务端 room 的叫法。
 
 ## Docker 部署
 
@@ -342,7 +350,7 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 }
 ```
 
-房间是**按每次工具调用**指定的，不写在配置里：给任意 `remotr_*` 工具传 `room` 参数即可（「复制给 AI 修复」按钮会把房间名放进粘贴的上下文里）。这样上面这段 URL 是稳定的——换房间不需要改 `.mcp.json`。不知道房间名时调用 `remotr_list_rooms`。
+房间是**按每次工具调用**指定的，不写在配置里：给任意 `remotr_*` 工具传 `project`（或其别名 `room`）参数即可——面板里房间叫「项目」，「复制给 AI 修复」按钮会把 `- project: xxx` 放进粘贴的上下文里。这样上面这段 URL 是稳定的——换项目不需要改 `.mcp.json`。不知道名字时调用 `remotr_list_rooms`。
 
 也仍可用 query 参数固定一个默认房间：`http://localhost:9777/mcp?room=teamA`（默认 `default`），在调用未传 `room` 时生效。
 
@@ -372,10 +380,10 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 |------|------|
 | `remotr_list_rooms` | 列出活跃房间及各自会话数。不知道房间名时用它。 |
 | `remotr_list_sessions` | 列出在线会话（deviceId、pageId、url、框架、identity）。先调用它找到目标。 |
-| `remotr_get_errors` | 某会话的近期报错（未捕获错误、未处理 Promise 拒绝、console.error），带原始堆栈。 |
+| `remotr_get_errors` | 某会话的报错（未捕获错误、未处理 Promise 拒绝、console.error），带原始堆栈，最早的在前。可选 `since`（毫秒时间戳）过滤掉上一轮已处理的旧报错。 |
 | `remotr_resolve_error` | 通过 Source Map 把某条报错的堆栈逐帧还原为原始 `file:line` + 源码片段。 |
 | `remotr_get_context` | 完整诊断包：系统信息、报错、还原后的栈帧 + 片段、近期 console 时间线、失败的网络请求。 |
-| `remotr_diagnose` | 一键分诊：最近（或第 N 条）报错 + Source Map 还原的顶帧 + 片段 + 近期 console/network 时间线 + 启发式推断原因。 |
+| `remotr_diagnose` | 一键分诊：最新（或 `errorIndex` 指定的一条）报错 + Source Map 还原的顶帧 + 片段 + 近期 console/network 时间线 + 启发式推断原因。同样接受 `since`。 |
 | `remotr_run_eval` | 在目标页面执行任意 JS 表达式并返回序列化结果（AI 的「操作」原语）。 |
 | `remotr_set_tracepoint` | 在点分函数路径上下无暂停埋点（可带条件表达式）——AI 驱动的断点放置。 |
 | `remotr_get_tracepoint_hits` | 读取近期埋点命中（参数 / 返回值 / 抛错 / 堆栈 / 耗时），封顶且可按埋点 id 过滤。 |
@@ -386,11 +394,13 @@ Remotr 内置一个 MCP 服务器（`@remotr/mcp`），让 **Claude Code** 读�
 
 ### 最快路径：「复制给 AI 修复」
 
-在会话视图工具栏点击 **🤖 复制给 AI 修复**，它会把一段可直接粘贴的提示词——server/room/deviceId/pageId/url 加上操作说明——复制到剪贴板。粘贴给 Claude Code，它就会激活 MCP、拉取还原后的报错与上下文，并针对你的仓库给出修复。剪贴板内容还附带 `.mcp.json` 片段，以备尚未配置 MCP 时使用。
+在会话视图工具栏点击 **🤖 复制给 AI 修复**，它会把一段可直接粘贴的提示词——server/project/deviceId/pageId/url、一个 `since` 时间戳、面板当前显示的报错列表，加上操作说明——复制到剪贴板。粘贴给 Claude Code，它就会激活 MCP、拉取还原后的报错与上下文，并针对你的仓库给出修复。剪贴板内容还附带 `.mcp.json` 片段，以备尚未配置 MCP 时使用。
+
+修完一个、刷新页面、又出了新错、再点一次复制？AI 只会处理新的那个：页面刷新会让服务端另起一份事件 backlog，面板也会在刷新时清掉历史，`since` 则把 AI 限定在面板正显示的范围内——即使新开一个 AI 会话，也不会把上一轮已修好的报错再修一遍。
 
 ### 没有 Source Map 时
 
-如果某脚本没有 Source Map（或是 `hidden-source-map` / 跨域 / 被 CORS 拦截），还原会**优雅降级**：工具仍返回错误消息、压缩位置、console 时间线、失败请求和页面上下文。Claude 通常仍能凭消息 + 符号 + 上下文定位修复——只是不如有 map 时精确。要获得精确映射，请将 `.map` 文件同源部署且保留 `//# sourceMappingURL=` 注释（dev/staging 构建一般已满足）。
+如果某脚本没有 Source Map（或是 `hidden-source-map` / 跨域 / 被 CORS 拦截），还原会**优雅降级**：工具仍返回错误消息、压缩位置、console 时间线、失败请求和页面上下文。Claude 通常仍能凭消息 + 符号 + 上下文定位修复——只是不如有 map 时精确。要获得精确映射，请将 `.map` 文件同源部署且保留 `//# sourceMappingURL=` 注释（dev/staging 构建一般已满足）。做不到时（生产 `hidden-source-map`、map 在别的域），打开面板 **源码** 标签——每个脚本后有 `map` / `无 map` 标签，hover 可见失败原因——选中脚本点 **📥 导入 .map** 载入本地 `.map` 文件；导入后控制台的「还原源码」同样使用它。
 
 ## 安全提示
 

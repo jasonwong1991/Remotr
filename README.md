@@ -10,10 +10,10 @@ Perfect for debugging scenarios where DevTools isn't accessible: mobile H5 pages
 
 - 🖥️ **Page Mirror** — Built on [rrweb](https://github.com/rrweb-io/rrweb) for real-time recording and replay, faithfully reconstructing the remote page (styles, DOM incremental updates); **manual zoom** (25%–200%) with auto-centering
 - 🎮 **Console** — Intercepts `console.*` + global errors/Promise rejections; supports **executing arbitrary JS** remotely (eval)
-- 🌐 **Network** — Intercepts `fetch` / `XHR` / `sendBeacon`, displaying URL/status/timing/headers/body. **WebSocket & SSE (EventSource) inspection** — every connection with its frame log (direction, size, payload preview). **Copy-as-cURL**, **HAR 1.2 export**, and resource-type filtering.
-- 📈 **Performance** — Core Web Vitals (FCP / LCP / CLS / TTFB with good/needs-improvement/poor rating), long-task list, and live JS-heap + FPS sparklines. Built on `PerformanceObserver`, fully feature-detected for old WebViews.
+- 🌐 **Network** — Intercepts `fetch` / `XHR` / `sendBeacon` (URL/status/timing/headers/body) and, like DevTools, lists **every** resource the page loaded — the document itself, `<head>` CSS/JS fetched before the SDK ran, images, fonts, failed tag loads — via buffered Resource Timing, with real status codes where the browser exposes them. **WebSocket & SSE (EventSource) inspection** — every connection with its frame log (direction, size, payload preview). **Copy-as-cURL**, **HAR 1.2 export**, and resource-type filtering.
+- 📈 **Performance** — Core Web Vitals (FCP / LCP / CLS / TTFB with good/needs-improvement/poor rating), long-task list, and live JS-heap + FPS sparklines (sampled only while a panel is attached, so idle sessions produce no noise). Built on `PerformanceObserver`, fully feature-detected for old WebViews.
 - 🧬 **Elements** — Live DOM tree rebuilt from the rrweb mirror (hide/delete/edit reflect instantly); DevTools-style right-click menu: copy selector/XPath/JS-path/outerHTML, force pseudo-states (`:hover`/`:focus`/…), hide/edit-HTML/delete, scroll into view; inspect & edit matched rules, computed styles, and box model; element picker
-- ⚛️ **Component Inspection (React / Vue)** — Select any element in the mirror and the Elements panel's **Component** sub-tab shows the owning framework component: name, framework badge, ancestor chain, **props** and **state** (React hooks / class state, Vue 3 setup/data, Vue 2 `$data`). Reads the same DOM-attached fibers/instances React & Vue DevTools use — no app-side setup, per-element detection so mixed-framework pages work.
+- ⚛️ **Component Inspection (React / Vue)** — Select any element in the mirror and the Elements panel's **Component** sub-tab shows the owning framework component: name, framework badge, ancestor chain, **props** and **state** (React hooks / class state, Vue 3 setup/data, Vue 2 `$data`). Props/state **refresh live** while the pane is open (toggleable), with expanded nodes preserved. Reads the same DOM-attached fibers/instances React & Vue DevTools use — no app-side setup, per-element detection so mixed-framework pages work.
 - 🎯 **Function Tracepoints** — Trace any globally-reachable function by dotted path (e.g. `app.store.dispatch`) without pausing execution. Each call reports **arguments / return value / thrown error / call stack / duration**, serialized just like console objects. Optional condition expression (referencing `args` / `ret`) filters noisy call sites — a no-pause alternative to breakpoints for injected debugging.
 - 💾 **Storage** — View, edit, and delete localStorage / sessionStorage / Cookies (bidirectional)
 - 🗺️ **Sources & Source Maps** — Browse the page's scripts; the SDK fetches scripts and `.map` files same-origin (bypassing panel CORS) and resolves minified stacks back to original `src/Foo.tsx:42` with a code snippet. Console errors get a "resolve source" button that jumps straight to the original line.
@@ -235,11 +235,15 @@ REMOTR.start({
 
 ### 4. Open Debug Panel
 
-**Dashboard** (view all sessions):
+**Home** (all projects):
 ```
 http://<your-IP>:9777/
-or
-http://<your-IP>:9777/#/dashboard?room=default
+```
+Lists every active project (= the `data-room` value of the injected SDK) with online/total session counts. Click a card to open its dashboard, or type a project name to open one that has no connections yet (to grab the inject snippet).
+
+**Dashboard** (all sessions of one project):
+```
+http://<your-IP>:9777/#/dashboard?project=default
 ```
 
 Features:
@@ -250,10 +254,12 @@ Features:
 
 **Session Debug** (debug specific page):
 ```
-http://<your-IP>:9777/#/session?room=default&deviceId=xxx&pageId=yyy
+http://<your-IP>:9777/#/session?project=default&deviceId=xxx&pageId=yyy
 ```
 
-Click "← Dashboard" button in session view to return.
+Click "← Dashboard" button in session view to return. Click the truncated page URL in the header to copy the full URL. Panel tabs (Console / Network / Elements / …) can be **dragged to reorder**; the order is remembered in `localStorage` (↺ resets it).
+
+> Old links using `?room=` keep working; `project` is just the panel's name for the server-side room.
 
 ## Docker Deployment
 
@@ -360,7 +366,7 @@ The relay server exposes MCP over **Streamable HTTP** at `/mcp` — no local Nod
 }
 ```
 
-Rooms are chosen **per tool call**, not per config: pass `room` to any `remotr_*` tool (the "Copy for AI fix" button puts the room name in the pasted context). This keeps the URL above stable — switching rooms never requires editing `.mcp.json`. Call `remotr_list_rooms` if you don't know the room name.
+Rooms are chosen **per tool call**, not per config: pass `project` (or its alias `room`) to any `remotr_*` tool — the panel calls rooms "projects", and the "Copy for AI fix" button puts `- project: xxx` in the pasted context. This keeps the URL above stable — switching projects never requires editing `.mcp.json`. Call `remotr_list_rooms` if you don't know the name.
 
 You can still pin a default with a query parameter — `http://localhost:9777/mcp?room=teamA` (defaults to `default`) — which applies whenever a call omits `room`.
 
@@ -390,10 +396,10 @@ If you prefer a local stdio process (e.g. offline against a local build), the CL
 |------|---------|
 | `remotr_list_rooms` | List active rooms with session counts. Use when the room name is unknown. |
 | `remotr_list_sessions` | List live sessions (deviceId, pageId, url, framework, identity). Call first to find a target. |
-| `remotr_get_errors` | Recent errors for a session (uncaught errors, unhandled rejections, console.error) with raw stacks. |
+| `remotr_get_errors` | Errors for a session (uncaught errors, unhandled rejections, console.error) with raw stacks, oldest first. Optional `since` (epoch ms) hides errors already handled in an earlier round. |
 | `remotr_resolve_error` | Resolve one error's stack to original `file:line` + code snippet per frame via source maps. |
 | `remotr_get_context` | Full diagnostic bundle: system info, the error, resolved frames + snippets, recent console timeline, failed network requests. |
-| `remotr_diagnose` | One-shot triage: latest (or Nth) error + source-map-resolved top frame + snippet + recent console/network timeline + a heuristic suggested cause. |
+| `remotr_diagnose` | One-shot triage: latest (or `errorIndex`-th) error + source-map-resolved top frame + snippet + recent console/network timeline + a heuristic suggested cause. Accepts the same `since`. |
 | `remotr_run_eval` | Execute an arbitrary JS expression in the target page and return the serialized result (the AI's "act" primitive). |
 | `remotr_set_tracepoint` | Place a no-pause tracepoint on a dotted function path (optional condition) — AI-driven breakpoint placement. |
 | `remotr_get_tracepoint_hits` | Read recent tracepoint hits (args / return / thrown / stack / duration), capped and filterable by tracepoint id. |
@@ -404,11 +410,13 @@ A session is identified by the **(deviceId, pageId) pair** — `pageId` is deriv
 
 ### The fast path: "Copy for AI fix"
 
-In the session view toolbar, click **🤖 Copy for AI fix**. It copies a ready-to-paste prompt — the server/room/deviceId/pageId/url plus instructions — into your clipboard. Paste it into Claude Code and it will activate the MCP, pull the resolved error and context, and propose a fix against your repo. The clipboard text also includes the `.mcp.json` snippet in case the MCP isn't configured yet.
+In the session view toolbar, click **🤖 Copy for AI fix**. It copies a ready-to-paste prompt — the server/project/deviceId/pageId/url, a `since` timestamp, the errors currently visible in the panel, plus instructions — into your clipboard. Paste it into Claude Code and it will activate the MCP, pull the resolved error and context, and propose a fix against your repo. The clipboard text also includes the `.mcp.json` snippet in case the MCP isn't configured yet.
+
+Fixed something, reloaded, hit a new error, copied again? Only the new one is worked on: a page reload starts a fresh event backlog on the server, the panel clears its history on reload, and `since` pins the AI to what the panel shows — so a brand-new AI session won't re-fix errors from the previous round.
 
 ### Without source maps
 
-If a script ships no source map (or it's `hidden-source-map` / cross-origin / behind CORS), resolution **degrades gracefully**: tools still return the error message, minified location, console timeline, failed requests, and page context. Claude can often still locate the fix from the message + symbols + context — just less precisely than with a map. To get precise mapping, serve `.map` files same-origin with the `//# sourceMappingURL=` comment intact (dev/staging builds usually already do).
+If a script ships no source map (or it's `hidden-source-map` / cross-origin / behind CORS), resolution **degrades gracefully**: tools still return the error message, minified location, console timeline, failed requests, and page context. Claude can often still locate the fix from the message + symbols + context — just less precisely than with a map. To get precise mapping, serve `.map` files same-origin with the `//# sourceMappingURL=` comment intact (dev/staging builds usually already do). If you can't (production `hidden-source-map`, map on another origin), open the **Sources** tab in the panel — each script shows a `map` / `no map` badge with the failure reason on hover — select the script and click **📥 Import .map** to load a local `.map` file; the imported map then drives "resolve source" in the Console as well.
 
 ## Security Notice
 
