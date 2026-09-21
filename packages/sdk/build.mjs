@@ -1,4 +1,8 @@
 import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
+
+// 版本号以 package.json 为唯一来源，构建期注入（见 src/version.ts 的 __SDK_VERSION__）。
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'));
 
 // 将 SDK 打包为单个 IIFE 文件，可直接 <script> 注入任意页面。
 // rrweb 一并打入（页面镜像所需），无需目标页面有任何依赖。
@@ -20,7 +24,8 @@ await build({
   legalComments: 'none',
   define: {
     'process.env.NODE_ENV': '"production"',
+    __SDK_VERSION__: JSON.stringify(version),
   },
 });
 
-console.log('[sdk] built dist/remotr.js');
+console.log(`[sdk] built dist/remotr.js (v${version})`);

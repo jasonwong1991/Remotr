@@ -3,8 +3,6 @@
  * 负责生成和持久化 deviceId、pageId，以及读取身份标识
  */
 
-import type { SessionId, SessionMetadata } from '@remotr/shared';
-
 /**
  * 模块加载时（storage 插件 hook 安装前）捕获的原始 setItem。
  * 心跳每 3s 写一次 __remotr_tabs:* —— 若走被劫持的 setItem，会把 SDK 自己的
@@ -337,34 +335,4 @@ export function getIdentity(configIdentity?: string, identityCookie?: string): s
   if (configIdentity) return configIdentity;
   if (!identityCookie) return undefined;
   return readCookie(identityCookie);
-}
-
-/**
- * 构建完整的 SessionMetadata
- */
-export function buildSessionMetadata(
-  sessionId: SessionId,
-  identity?: string,
-  systemInfo?: { ua: string; url: string; title: string; platform?: string }
-): SessionMetadata {
-  const metadata: SessionMetadata = {
-    session: sessionId,
-  };
-
-  if (identity) {
-    metadata.identity = identity;
-  }
-
-  if (systemInfo) {
-    metadata.device = {
-      ua: systemInfo.ua,
-      platform: systemInfo.platform,
-    };
-    metadata.page = {
-      url: systemInfo.url,
-      title: systemInfo.title,
-    };
-  }
-
-  return metadata;
 }

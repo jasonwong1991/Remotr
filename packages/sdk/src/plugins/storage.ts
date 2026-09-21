@@ -6,6 +6,9 @@ import type { Transport } from '../transport.js';
  * - 连接建立时发送全量快照
  * - 劫持 setItem/removeItem/clear 上报增量
  * - 响应调试端的 storage.* 命令（读/写/删/清）
+ *
+ * 禁用 storage 的 iframe / 隐私模式下访问 window.localStorage 本身就会抛
+ * SecurityError —— 一律经 getStore() 取，拿不到就只降级该类存储。
  */
 export function installStorage(transport: Transport): () => void {
   // 连接建立后推送初始快照
@@ -15,8 +18,10 @@ export function installStorage(transport: Transport): () => void {
     sendSnapshot(transport, 'cookie');
   });
 
-  const restoreLocal = hookStorage(transport, 'local', window.localStorage);
-  const restoreSession = hookStorage(transport, 'session', window.sessionStorage);
+  const local = getStore('local');
+  const session = getStore('session');
+  const restoreLocal = local ? hookStorage(transport, 'local', local) : null;
+  const restoreSession = session ? hookStorage(transport, 'session', session) : null;
 
   // 命令处理
   transport.onCommand('storage.getAll', (data) => {
@@ -32,7 +37,8 @@ export function installStorage(transport: Transport): () => void {
       value: string;
     };
     if (storageType === 'cookie') {
-      document.cookie = `${key}=${encodeURIComponent(value)}`;
+      // 固定 path=/：否则写在当前路径下，换个路由就"消失"，也删不掉
+      document.cookie = `${key}=${encodeURIComponent(value)}; path=/`;
     } else {
       getStore(storageType)?.setItem(key, value);
     }
@@ -42,7 +48,7 @@ export function installStorage(transport: Transport): () => void {
   transport.onCommand('storage.delete', (data) => {
     const { storageType, key } = data as { storageType: StorageType; key: string };
     if (storageType === 'cookie') {
-      document.cookie = `${key}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+      deleteCookie(key);
     } else {
       getStore(storageType)?.removeItem(key);
     }
@@ -52,9 +58,7 @@ export function installStorage(transport: Transport): () => void {
   transport.onCommand('storage.clear', (data) => {
     const { storageType } = data as { storageType: StorageType };
     if (storageType === 'cookie') {
-      for (const [k] of readCookies()) {
-        document.cookie = `${k}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
-      }
+      for (const [k] of readCookies()) deleteCookie(k);
     } else {
       getStore(storageType)?.clear();
     }
@@ -63,16 +67,26 @@ export function installStorage(transport: Transport): () => void {
 
   return () => {
     try {
-      restoreLocal();
+      restoreLocal?.();
     } catch {
       /* best-effort */
     }
     try {
-      restoreSession();
+      restoreSession?.();
     } catch {
       /* best-effort */
     }
   };
+}
+
+/**
+ * 删除 cookie：同名 cookie 可能带 path=/ 也可能是默认路径（当前目录），
+ * 两种都过期一遍；其他 path/domain 下的从 JS 无法删除。
+ */
+function deleteCookie(key: string): void {
+  const expired = 'expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  document.cookie = `${key}=; ${expired}; path=/`;
+  document.cookie = `${key}=; ${expired}`;
 }
 
 /** SDK 内部键前缀：这些写入是 SDK 自己的（如 session 心跳），不应采集成 storage.change */
@@ -81,8 +95,12 @@ function isInternalKey(key: string): boolean {
 }
 
 function getStore(type: StorageType): Storage | null {
-  if (type === 'local') return window.localStorage;
-  if (type === 'session') return window.sessionStorage;
+  try {
+    if (type === 'local') return window.localStorage;
+    if (type === 'session') return window.sessionStorage;
+  } catch {
+    /* 禁用 storage 的环境读取属性即抛 SecurityError */
+  }
   return null;
 }
 
@@ -98,12 +116,25 @@ function readEntries(type: StorageType): Array<[string, string]> {
   return entries;
 }
 
+/** 逐条解析 cookie；单条 URI 编码损坏（如第三方 SDK 写的 %E0%A4%A）不拖垮整份快照 */
 function readCookies(): Array<[string, string]> {
-  if (!document.cookie) return [];
-  return document.cookie.split('; ').map((pair) => {
+  let raw = '';
+  try {
+    raw = document.cookie;
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+  return raw.split('; ').map((pair) => {
     const idx = pair.indexOf('=');
     const k = idx >= 0 ? pair.slice(0, idx) : pair;
-    const v = idx >= 0 ? decodeURIComponent(pair.slice(idx + 1)) : '';
+    const encoded = idx >= 0 ? pair.slice(idx + 1) : '';
+    let v = encoded;
+    try {
+      v = decodeURIComponent(encoded);
+    } catch {
+      /* 保留原文 */
+    }
     return [k, v] as [string, string];
   });
 }

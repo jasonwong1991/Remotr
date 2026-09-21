@@ -20,6 +20,12 @@ import type { Transport } from './transport.js';
 /** 环形缓冲容量；超出丢弃最旧，防止未连接时内存无界增长。 */
 const RING_CAP = 100;
 
+/**
+ * 手动模式下页面可能加载了 SDK 却一直不调 start()：boot 期采集到此为止自动拆除，
+ * 不让 console.error 被永久包裹。boot 崩溃都发生在最初几秒，60s 足够。
+ */
+const AUTO_TEARDOWN_MS = 60_000;
+
 /** 缓冲条目：复用现有 page.error / console.entry 协议事件，不新增协议方法。 */
 type PreconnectEntry =
   | { method: 'page.error'; data: PageErrorEvent }
@@ -105,6 +111,15 @@ export function installPreconnectCapture(): void {
         if (origConsoleError) c.error = origConsoleError;
       });
     }
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const timer = setTimeout(() => {
+      if (recording) uninstallPreconnectCapture();
+    }, AUTO_TEARDOWN_MS);
+    teardownFns.push(() => clearTimeout(timer));
   } catch {
     /* ignore */
   }

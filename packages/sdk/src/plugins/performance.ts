@@ -10,6 +10,11 @@ import { debugWarn } from '../internals.js';
  * entryType、`{buffered:true}`、performance.memory 均晚于 Chrome 58 —— 每个
  * 能力独立特性探测 + try/catch,任一缺失只静默降级,绝不破坏宿主页面。
  *
+ * 高频采样(FPS 每秒 / 内存每 2s)只在有面板正在调试本会话时进行:服务端通过
+ * session.watchers 通知观看者数量,归零即停止 —— 无人观看的会话不再每秒产出
+ * 只会占满 backlog、撑大录制的噪声。Web Vitals / 长任务是低频且有历史价值的,
+ * 始终采集。
+ *
  * 全部为单向事件(SDK → 调试端),无命令。install 返回 uninstall:断开全部 observer、
  * 清定时器、取消 rAF,并置 stopped 位,保证卸载后任何异步回调都不再上报。
  */
@@ -44,6 +49,8 @@ export function installPerformance(transport: Transport): () => void {
   const observers: PerformanceObserver[] = [];
   let memoryTimer: ReturnType<typeof setInterval> | null = null;
   let rafId: number | null = null;
+  /** 高频采样是否运行中(由观看者数驱动) */
+  let sampling = false;
 
   const sendVital = (name: WebVitalName, value: number): void => {
     if (stopped) return;
@@ -144,7 +151,9 @@ export function installPerformance(transport: Transport): () => void {
   const hasMemory =
     typeof performance !== 'undefined' &&
     !!(performance as Performance & { memory?: unknown }).memory;
-  if (hasMemory) {
+
+  const startMemorySampling = (): void => {
+    if (!hasMemory || memoryTimer !== null) return;
     memoryTimer = setInterval(() => {
       if (stopped) return;
       try {
@@ -168,14 +177,28 @@ export function installPerformance(transport: Transport): () => void {
         /* ignore */
       }
     }, MEMORY_INTERVAL_MS);
-  }
+  };
+
+  const stopMemorySampling = (): void => {
+    if (memoryTimer === null) return;
+    try {
+      clearInterval(memoryTimer);
+    } catch {
+      /* best-effort */
+    }
+    memoryTimer = null;
+  };
 
   // ── FPS:rAF 计帧,每窗口结算一次 ──
-  if (typeof requestAnimationFrame === 'function') {
+  const startFpsSampling = (): void => {
+    if (typeof requestAnimationFrame !== 'function' || rafId !== null) return;
     let frames = 0;
     let windowStart = now();
     const tick = (): void => {
-      if (stopped) return;
+      if (stopped || !sampling) {
+        rafId = null;
+        return;
+      }
       frames++;
       const t = now();
       const elapsed = t - windowStart;
@@ -192,10 +215,40 @@ export function installPerformance(transport: Transport): () => void {
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
-  }
+  };
+
+  const stopFpsSampling = (): void => {
+    if (rafId === null) return;
+    try {
+      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
+    } catch {
+      /* best-effort */
+    }
+    rafId = null;
+  };
+
+  const setSampling = (on: boolean): void => {
+    if (stopped || on === sampling) return;
+    sampling = on;
+    if (on) {
+      startMemorySampling();
+      startFpsSampling();
+    } else {
+      stopMemorySampling();
+      stopFpsSampling();
+    }
+  };
+
+  // 观看者数由服务端在面板接入/离开时推送;重连后服务端会立即补发当前值
+  transport.onServerEvent('session.watchers', (data) => {
+    setSampling((data?.count ?? 0) > 0);
+  });
+  // 断线重连期间以最后一次通知为准;连接建立时先停,等服务端补发再决定
+  transport.onConnected(() => setSampling(false));
 
   return function uninstall(): void {
     stopped = true;
+    sampling = false;
     for (const o of observers) {
       try {
         o.disconnect();
@@ -204,21 +257,7 @@ export function installPerformance(transport: Transport): () => void {
       }
     }
     observers.length = 0;
-    if (memoryTimer !== null) {
-      try {
-        clearInterval(memoryTimer);
-      } catch {
-        /* best-effort */
-      }
-      memoryTimer = null;
-    }
-    if (rafId !== null) {
-      try {
-        if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
-      } catch {
-        /* best-effort */
-      }
-      rafId = null;
-    }
+    stopMemorySampling();
+    stopFpsSampling();
   };
 }

@@ -14,7 +14,8 @@ import { installFramework } from './plugins/framework.js';
 import { installPerformance } from './plugins/performance.js';
 import { SDK_VERSION } from './version.js';
 import { getDeviceId, getPageId, getIdentity, stopSession } from './session.js';
-import { setDebug, debugLog } from './internals.js';
+import { setDebug, debugLog, debugWarn } from './internals.js';
+import { serialize } from './serializer.js';
 import type { SessionId } from '@remotr/shared';
 
 export interface REMOTRConfig {
@@ -35,6 +36,12 @@ export interface REMOTRConfig {
   /** 是否输出 SDK 内部诊断日志（会被 console 插件再采集，生产默认关闭） */
   debug?: boolean;
 }
+
+/**
+ * 本次页面加载的标识：模块加载时生成一次，页面刷新/重进即变化，断线重连不变。
+ * 服务端与面板据此把"新的一次加载"当作新起点清掉旧的 console/network 历史。
+ */
+const LOAD_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 let started = false;
 /** start() 装配的运行时句柄，供 stop()/destroy() 拆卸。 */
@@ -61,7 +68,7 @@ export function start(config: REMOTRConfig = {}): void {
 
   const sessionId: SessionId = { deviceId, pageId };
 
-  const transport = new Transport(server, room, sessionId, identity);
+  const transport = new Transport(server, room, sessionId, identity, LOAD_ID);
 
   // SDK 自身 transport 的 WebSocket URL 前缀，供 ws-capture 排除自采集（防回环）。
   let internalWsPrefix = '';
@@ -74,27 +81,42 @@ export function start(config: REMOTRConfig = {}): void {
   }
 
   // 采集插件按职责拆分，互不依赖（SOLID: 单一职责 + 开闭）。
+  // 每个插件独立 try/catch：单个安装失败（如禁 storage 的 iframe 抛 SecurityError）
+  // 只降级该插件并把原因送到面板控制台，不阻断其余采集。
   // 返回 uninstall 的插件收集起来供 stop() 拆卸；其余尽力而为。
   const uninstalls: Array<() => void> = [];
-  const collect = (fn: void | (() => void)): void => {
-    if (typeof fn === 'function') uninstalls.push(fn);
+  const collect = (name: string, install: () => void | (() => void)): void => {
+    try {
+      const fn = install();
+      if (typeof fn === 'function') uninstalls.push(fn);
+    } catch (err) {
+      debugWarn(`[remotr] plugin "${name}" failed to install:`, err);
+      try {
+        transport.send('console.entry', {
+          level: 'warn',
+          args: [serialize(`[remotr] plugin "${name}" disabled: ${String(err)}`)],
+        });
+      } catch {
+        /* ignore */
+      }
+    }
   };
 
   // 回放 boot 期错误环形缓冲：此刻 socket 未连上，条目落入离线队列队首，先于实时
   // 流送达；drain 内部随即卸载 pre-connect 采集，交接给下面的 console 插件（不双采）。
   drainPreconnect(transport);
 
-  collect(installConsole(transport));
-  collect(installNetwork(transport));
-  collect(installWsCapture(transport, internalWsPrefix));
-  collect(installStorage(transport));
-  collect(installPage(transport));
-  collect(installSources(transport));
-  if (mirror) collect(installRrweb(transport));
-  collect(installElements(transport));
-  collect(installFramework(transport));
-  collect(installTrace(transport));
-  collect(installPerformance(transport));
+  collect('console', () => installConsole(transport));
+  collect('network', () => installNetwork(transport));
+  collect('ws-capture', () => installWsCapture(transport, internalWsPrefix));
+  collect('storage', () => installStorage(transport));
+  collect('page', () => installPage(transport));
+  collect('sources', () => installSources(transport));
+  if (mirror) collect('rrweb', () => installRrweb(transport));
+  collect('elements', () => installElements(transport, mirror));
+  collect('framework', () => installFramework(transport));
+  collect('trace', () => installTrace(transport));
+  collect('performance', () => installPerformance(transport));
 
   transport.connect();
 

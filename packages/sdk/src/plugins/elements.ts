@@ -225,10 +225,49 @@ function collectForcedRules(
 }
 
 /**
+ * 展开一个 CSSRuleList 里所有样式规则（递归进入 @media / @supports / @layer /
+ * @container 等分组规则），附带所在条件链，供匹配规则查询使用。
+ * 这里不做 @media 条件求值：能不能命中由 element.matches 决定，条件只用于展示。
+ */
+function flattenStyleRules(
+  rules: CSSRuleList,
+  out: Array<{ rule: CSSStyleRule; media?: string }>,
+  media: string | undefined,
+): void {
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    if (rule instanceof CSSStyleRule) {
+      out.push({ rule, media });
+      continue;
+    }
+    // CSSGroupingRule 覆盖 @media / @supports / @layer(块) / @container / @scope
+    // （文件内 CSSRule 名字被协议类型占用，这里用结构类型指代 DOM 规则）
+    const group = rule as unknown as { cssRules?: CSSRuleList; cssText: string };
+    if (group.cssRules) {
+      const cond = groupLabel(group);
+      flattenStyleRules(group.cssRules, out, media ? (cond ? `${media} and ${cond}` : media) : cond);
+    }
+  }
+}
+
+/** 分组规则的可读标签，如 "@media (max-width: 600px)" / "@layer base" */
+function groupLabel(rule: { cssText: string }): string | undefined {
+  const text = rule.cssText;
+  const brace = text.indexOf('{');
+  const head = (brace >= 0 ? text.slice(0, brace) : text).trim();
+  return head || undefined;
+}
+
+/**
  * Elements 插件：管理 DOM 元素与 rrweb node ID 的映射关系。
  * 用于前端与后端 DOM 定位的关联。
+ *
+ * @param mirror 是否启用了 rrweb 镜像。启用时 rrweb mirror 是唯一权威 ID 源，
+ *   注册表不再全量遍历 DOM（那会对每个节点持强引用且与 mirror 的 ID 空间不兼容）；
+ *   仅 mirror 关闭时才用顺序遍历兜底。
+ * 返回卸载函数：清除强制伪类样式、销毁高亮层与拾取器。
  */
-export function installElements(transport: Transport): void {
+export function installElements(transport: Transport, mirror = true): () => void {
   const registry = new ElementRegistry();
 
   // 强制伪类状态：nodeId → 该元素当前强制的伪类集合，以及承载改写规则的注入样式表。
@@ -275,10 +314,12 @@ export function installElements(transport: Transport): void {
     }
   });
 
-  // 连接时初始化元素注册表
-  transport.onConnected(() => {
-    registry.rebuild();
-  });
+  // 无 rrweb 镜像时才需要顺序遍历建表（有镜像时 mirror 是唯一权威 ID 源）
+  if (!mirror) {
+    transport.onConnected(() => {
+      registry.rebuild();
+    });
+  }
 
   // 处理元素查询命令
   transport.onCommand('element.resolve', (data) => {
@@ -287,7 +328,7 @@ export function installElements(transport: Transport): void {
     if (!element) {
       return { element: null, error: `Element with rrwebId ${rrwebId} not found` };
     }
-    return { element: { tag: element.tagName, classes: element.className } };
+    return { element: { tag: element.tagName, classes: Array.from(element.classList).join(' ') } };
   });
 
   // 处理元素注册命令
@@ -600,12 +641,12 @@ export function installElements(transport: Transport): void {
 
       const source = sheet.href ?? '<style>';
 
-      for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex++) {
-        const rule = rules[ruleIndex];
+      // 递归展开 @media / @supports / @layer 内的规则：DevTools 会列出这些嵌套规则，
+      // 只看顶层会漏掉响应式样式的大半。
+      const flat: Array<{ rule: CSSStyleRule; media?: string }> = [];
+      flattenStyleRules(rules, flat, undefined);
 
-        // 只处理普通样式规则（排除 @media、@keyframes 等）
-        if (!(rule instanceof CSSStyleRule)) continue;
-
+      for (const { rule, media } of flat) {
         const selector = rule.selectorText;
 
         let matches = false;
@@ -625,21 +666,23 @@ export function installElements(transport: Transport): void {
           if (!forState) continue;
         }
 
-        // 提取规则中的样式属性
+        // 提取规则中的样式属性；!important 会改变级联结果，随值一并带上
         const properties: Record<string, string> = {};
         const ruleStyle = rule.style;
         for (let propIndex = 0; propIndex < ruleStyle.length; propIndex++) {
           const prop = ruleStyle.item(propIndex);
           const value = ruleStyle.getPropertyValue(prop);
           if (prop && value) {
-            properties[prop] = value;
+            properties[prop] = ruleStyle.getPropertyPriority(prop) === 'important'
+              ? `${value} !important`
+              : value;
           }
         }
 
         matchedRules.push({
           selector,
           styleSheetIndex: sheetIndex,
-          source,
+          source: media ? `${source} ${media}` : source,
           properties,
           specificity: calculateSpecificity(selector),
           forState,
@@ -652,4 +695,26 @@ export function installElements(transport: Transport): void {
 
     return { inlineStyles, rules: matchedRules };
   });
+
+  return () => {
+    try {
+      picker.stop();
+    } catch {
+      /* best-effort */
+    }
+    try {
+      overlay.destroy();
+    } catch {
+      /* best-effort */
+    }
+    // 摘掉强制伪类的标记类与注入样式，页面恢复原貌
+    for (const marker of Object.values(FORCE_MARKER)) {
+      for (const el of Array.from(document.querySelectorAll(`.${marker}`))) {
+        el.classList.remove(marker);
+      }
+    }
+    forcedByNode.clear();
+    forcedStyleEl?.remove();
+    forcedStyleEl = null;
+  };
 }

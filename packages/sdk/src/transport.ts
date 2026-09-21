@@ -8,11 +8,12 @@ import {
   type MethodName,
   type Reply,
   type SessionId,
-  type SessionMetadata,
 } from '@remotr/shared';
-import { buildSessionMetadata } from './session.js';
 
 type CommandHandler = (data: unknown) => Promise<unknown> | unknown;
+
+/** Server → SDK 的单向事件（无 id，不回复） */
+type ServerEventMethod = 'session.watchers';
 
 /**
  * Transport — SDK 端 WebSocket 传输层。
@@ -26,24 +27,31 @@ export class Transport {
   private reconnectDelay = 1000;
   private readonly maxDelay = 10_000;
   private closedByUser = false;
-  private handlers = new Map<CommandMethod, CommandHandler>();
+  private handlers = new Map<CommandMethod | ServerEventMethod, CommandHandler>();
   private connectedListeners: Array<() => void> = [];
   private sessionId: SessionId;
   private identity?: string;
-  private sessionMetadata: SessionMetadata | null = null;
 
-  constructor(serverUrl: string, room: string, sessionId: SessionId, identity?: string) {
+  constructor(
+    serverUrl: string,
+    room: string,
+    sessionId: SessionId,
+    identity?: string,
+    loadId?: string,
+  ) {
     // serverUrl 形如 http(s)://host:port，转为 ws(s)://host:port/ws
     const u = new URL(serverUrl);
     const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
 
-    // WebSocket URL 包含 session 信息
+    // WebSocket URL 包含 session 信息；load 标识本次页面加载，服务端据此区分
+    // "刷新后重新连上"与"断线重连"（前者要清上一次加载的事件 backlog）
     const params = new URLSearchParams({
       room,
       role: 'sdk',
       deviceId: sessionId.deviceId,
       pageId: sessionId.pageId,
     });
+    if (loadId) params.set('load', loadId);
 
     if (identity) {
       params.set('identity', identity);
@@ -52,11 +60,6 @@ export class Transport {
     this.url = `${wsProto}//${u.host}/ws?${params.toString()}`;
     this.sessionId = sessionId;
     this.identity = identity;
-  }
-
-  /** 设置 session 元数据（由 page plugin 在收集 systemInfo 后调用） */
-  setSessionMetadata(metadata: SessionMetadata): void {
-    this.sessionMetadata = metadata;
   }
 
   /** 获取 session ID */
@@ -121,6 +124,11 @@ export class Transport {
     this.handlers.set(method, handler);
   }
 
+  /** 注册服务端事件处理器（Server → SDK 的单向通知，如观看者数变化） */
+  onServerEvent<M extends ServerEventMethod>(method: M, handler: (data: MethodData[M]) => void): void {
+    this.handlers.set(method, handler as CommandHandler);
+  }
+
   /** 连接建立时回调（用于发送初始快照） */
   onConnected(fn: () => void): void {
     this.connectedListeners.push(fn);
@@ -130,14 +138,7 @@ export class Transport {
   send<M extends MethodName>(method: M, data: MethodData[M]): void {
     const frame: Frame = {
       kind: 'msg',
-      envelope: makeEnvelope(
-        method,
-        data,
-        'sdk',
-        null,
-        Date.now(),
-        this.sessionMetadata ?? undefined,
-      ),
+      envelope: makeEnvelope(method, data, 'sdk'),
     };
     this.raw(encodeFrame(frame));
   }
@@ -163,7 +164,7 @@ export class Transport {
     const frame = decodeFrame(text);
     if (!frame || frame.kind !== 'msg') return;
     const env = frame.envelope;
-    const handler = this.handlers.get(env.method as CommandMethod);
+    const handler = this.handlers.get(env.method as CommandMethod | ServerEventMethod);
     if (!handler) return;
 
     let reply: Reply;

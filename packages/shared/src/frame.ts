@@ -30,11 +30,6 @@ export function makeEnvelope<M extends MethodName>(
   source: Role,
   id: string | null = null,
   timestamp = Date.now(),
-  metadata?: Envelope['metadata'],
 ): Envelope<M> {
-  const envelope: Envelope<M> = { id, method, data, timestamp, source };
-  if (metadata) {
-    envelope.metadata = metadata;
-  }
-  return envelope;
+  return { id, method, data, timestamp, source };
 }

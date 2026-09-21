@@ -7,19 +7,19 @@ const LEVELS: ConsoleLevel[] = ['log', 'info', 'warn', 'error', 'debug'];
 /**
  * Console 插件：劫持 console.* 并捕获全局错误。
  * 原则：先调用原始方法（不影响开发者本地输出），再采集（同步，保证时序）。
+ * 返回卸载函数：还原 console 方法、解绑全局错误监听。
  */
-export function installConsole(transport: Transport): void {
+export function installConsole(transport: Transport): () => void {
+  const c = console as unknown as Record<string, (...a: unknown[]) => void>;
   const original: Partial<Record<ConsoleLevel, (...args: unknown[]) => void>> = {};
 
   for (const level of LEVELS) {
-    const orig = (console as unknown as Record<string, (...a: unknown[]) => void>)[level];
+    const orig = c[level];
     if (typeof orig !== 'function') continue;
-    original[level] = orig.bind(console);
+    original[level] = orig;
 
-    (console as unknown as Record<string, (...a: unknown[]) => void>)[level] = (
-      ...args: unknown[]
-    ) => {
-      original[level]?.(...args);
+    c[level] = (...args: unknown[]) => {
+      orig.apply(console, args);
       try {
         transport.send('console.entry', {
           level,
@@ -33,7 +33,7 @@ export function installConsole(transport: Transport): void {
   }
 
   // 全局错误捕获
-  window.addEventListener('error', (ev: ErrorEvent) => {
+  const onError = (ev: ErrorEvent): void => {
     try {
       transport.send('page.error', {
         message: ev.message,
@@ -45,9 +45,9 @@ export function installConsole(transport: Transport): void {
     } catch {
       /* ignore */
     }
-  });
+  };
 
-  window.addEventListener('unhandledrejection', (ev: PromiseRejectionEvent) => {
+  const onRejection = (ev: PromiseRejectionEvent): void => {
     try {
       const reason = ev.reason;
       transport.send('page.error', {
@@ -58,5 +58,17 @@ export function installConsole(transport: Transport): void {
     } catch {
       /* ignore */
     }
-  });
+  };
+
+  window.addEventListener('error', onError);
+  window.addEventListener('unhandledrejection', onRejection);
+
+  return () => {
+    for (const level of LEVELS) {
+      const orig = original[level];
+      if (orig) c[level] = orig;
+    }
+    window.removeEventListener('error', onError);
+    window.removeEventListener('unhandledrejection', onRejection);
+  };
 }

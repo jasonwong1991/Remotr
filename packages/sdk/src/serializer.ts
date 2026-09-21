@@ -3,16 +3,32 @@ import type { SpyAtom, SpyAtomEntry } from '@remotr/shared';
 const MAX_DEPTH = 8;
 const MAX_CHILDREN = 100;
 const MAX_STRING = 10_000;
+/**
+ * 单次序列化的节点总预算。深度 × 子项数的上限是 100^8，
+ * `console.log(bigStore)` 一类的宽而深的对象会把宿主页面卡死——超预算的子树整体截断。
+ */
+const MAX_NODES = 2_000;
+
+/** 一次 serialize 调用内共享的遍历状态 */
+interface Ctx {
+  seen: WeakSet<object>;
+  /** 剩余节点预算 */
+  budget: number;
+}
 
 /**
  * 将任意 JS 值序列化为 SpyAtom，供跨端安全传输。
- * 处理：循环引用、深度截断、子项数量限制、特殊类型（Error/Date/RegExp/Node/函数）。
+ * 处理：循环引用、深度截断、子项数量限制、节点总量预算、特殊类型（Error/Date/RegExp/Node/函数）。
  */
 export function serialize(value: unknown): SpyAtom {
-  return walk(value, 0, new WeakSet());
+  return walk(value, 0, { seen: new WeakSet(), budget: MAX_NODES });
 }
 
-function walk(value: unknown, depth: number, seen: WeakSet<object>): SpyAtom {
+function walk(value: unknown, depth: number, ctx: Ctx): SpyAtom {
+  const { seen } = ctx;
+  if (ctx.budget-- <= 0) {
+    return { type: 'object', display: '…', truncated: true };
+  }
   // primitives
   if (value === null) return { type: 'null', value: null, display: 'null' };
   const t = typeof value;
@@ -90,9 +106,10 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): SpyAtom {
       const children: SpyAtomEntry[] = [];
       const limit = Math.min(len, MAX_CHILDREN);
       // 迭代可能触发抛错的 proxy 陷阱(getter/has trap);逐项包裹,失败降级为占位。
-      for (let i = 0; i < limit; i++) {
+      let i = 0;
+      for (; i < limit && ctx.budget > 0; i++) {
         try {
-          children.push({ key: String(i), value: walk(value[i], depth + 1, seen) });
+          children.push({ key: String(i), value: walk(value[i], depth + 1, ctx) });
         } catch {
           children.push({ key: String(i), value: { type: 'string', display: '[Unreadable]' } });
         }
@@ -101,7 +118,7 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): SpyAtom {
         type: 'array',
         display: `Array(${len})`,
         children,
-        truncated: len > MAX_CHILDREN || undefined,
+        truncated: len > i || undefined,
       };
     }
 
@@ -112,8 +129,8 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): SpyAtom {
       try {
         let i = 0;
         for (const [k, v] of value) {
-          if (i++ >= MAX_CHILDREN) break;
-          children.push({ key: safeKey(k), value: walk(v, depth + 1, seen) });
+          if (i++ >= MAX_CHILDREN || ctx.budget <= 0) break;
+          children.push({ key: safeKey(k), value: walk(v, depth + 1, ctx) });
         }
       } catch {
         children.push({ key: '…', value: { type: 'string', display: '[Unreadable]' } });
@@ -125,8 +142,8 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): SpyAtom {
       try {
         let i = 0;
         for (const v of value) {
-          if (i >= MAX_CHILDREN) break;
-          children.push({ key: String(i++), value: walk(v, depth + 1, seen) });
+          if (i >= MAX_CHILDREN || ctx.budget <= 0) break;
+          children.push({ key: String(i++), value: walk(v, depth + 1, ctx) });
         }
       } catch {
         children.push({ key: '…', value: { type: 'string', display: '[Unreadable]' } });
@@ -144,10 +161,11 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): SpyAtom {
     }
     const children: SpyAtomEntry[] = [];
     const limit = Math.min(keys.length, MAX_CHILDREN);
-    for (let i = 0; i < limit; i++) {
+    let i = 0;
+    for (; i < limit && ctx.budget > 0; i++) {
       const k = keys[i];
       try {
-        children.push({ key: k, value: walk((obj as Record<string, unknown>)[k], depth + 1, seen) });
+        children.push({ key: k, value: walk((obj as Record<string, unknown>)[k], depth + 1, ctx) });
       } catch {
         children.push({ key: k, value: { type: 'string', display: '[Unreadable]' } });
       }
@@ -157,7 +175,7 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): SpyAtom {
       type: 'object',
       display: ctor && ctor !== 'Object' ? ctor : `{${keys.length} keys}`,
       children,
-      truncated: keys.length > MAX_CHILDREN || undefined,
+      truncated: keys.length > i || undefined,
     };
   } finally {
     seen.delete(obj);

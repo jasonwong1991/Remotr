@@ -63,28 +63,37 @@ async function fetchSource(url: string): Promise<SourcesFetchResult> {
     const smURL = extractSourceMappingURL(content);
     let sourceMappingURL: string | undefined;
     let map: string | undefined;
+    let mapError: string | undefined;
 
     if (smURL) {
       if (smURL.startsWith('data:')) {
         sourceMappingURL = smURL;
         map = decodeMapDataUri(smURL);
+        if (!map) mapError = 'Invalid inline source map';
       } else {
         try {
           const abs = new URL(smURL, url).href;
           sourceMappingURL = abs;
           const mapRes = await doFetch(abs, { credentials: 'omit' });
-          if (mapRes.ok) {
+          if (!mapRes.ok) {
+            mapError = `HTTP ${mapRes.status}`;
+          } else {
             const mapText = await mapRes.text();
-            if (mapText.length > MAX_BYTES) truncated = true;
-            else map = mapText;
+            if (mapText.length > MAX_BYTES) {
+              truncated = true;
+              mapError = `Map exceeds ${MAX_BYTES / 1024 / 1024}MB limit`;
+            } else {
+              map = mapText;
+            }
           }
-        } catch {
-          /* map 取不到（跨域 / 未部署）→ 降级，仅返回 content */
+        } catch (err) {
+          // map 取不到（跨域 / 未部署）→ 降级，仅返回 content，并带上原因供面板提示手动导入
+          mapError = err instanceof Error ? err.message : String(err);
         }
       }
     }
 
-    return { url, content, sourceMappingURL, map, truncated: truncated || undefined };
+    return { url, content, sourceMappingURL, map, mapError, truncated: truncated || undefined };
   } catch (err) {
     return { url, content: '', error: err instanceof Error ? err.message : String(err) };
   }

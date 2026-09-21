@@ -10,28 +10,13 @@ export interface SessionId {
   pageId: string;
 }
 
-/** Session 元数据 */
-export interface SessionMetadata {
-  session: SessionId;
-  /** 可选身份标识，例如从 cookie 读取的 username / userId */
-  identity?: string;
-  /** 设备展示信息 */
-  device?: {
-    label?: string;
-    ua?: string;
-    platform?: string;
-  };
-  /** 页面展示信息 */
-  page?: {
-    url: string;
-    title: string;
-  };
-}
-
 /**
  * 消息信封 — 所有 WebSocket 消息共用的统一结构。
  * - id 为 null：单向事件（无需响应）
  * - id 为字符串：命令（接收方需回复同 id 的 Reply）
+ *
+ * 来源 session 由服务端按连接归属，信封本身不再携带（曾有的 metadata 字段
+ * 每帧多带 ~300B 却无人消费，已移除）。
  */
 export interface Envelope<M extends MethodName = MethodName> {
   id: string | null;
@@ -39,8 +24,6 @@ export interface Envelope<M extends MethodName = MethodName> {
   data: MethodData[M];
   timestamp: number;
   source: Role;
-  /** SDK → Server/Debugger 消息携带来源 session 信息 */
-  metadata?: SessionMetadata;
   /** Debugger → SDK 命令携带目标 session */
   target?: SessionId;
 }
@@ -82,6 +65,7 @@ export interface NetworkRequestEvent {
   /**
    * 发起方分类：
    * - 'fetch' / 'xhr' / 'beacon' / 'websocket'：JS API 主动发起
+   * - 'navigation'：页面文档自身（PerformanceNavigationTiming）
    * - 'link' / 'script' / 'img' / 'css' / 'video' / 'audio' / 'iframe' / 'other'：
    *   PerformanceResourceTiming.initiatorType 上报的标签加载
    */
@@ -115,6 +99,11 @@ export interface NetworkResponseEvent {
   duration: number;
   /** 是否来自缓存（基于 transferSize=0 && responseStart>0 推断） */
   fromCache?: boolean;
+  /**
+   * status 为推断值（Resource Timing 拿不到状态码的浏览器上标签加载统一按 200 记）。
+   * Chrome 109+ 有 responseStatus 时为真实值，不带此标记。
+   */
+  statusEstimated?: boolean;
 }
 
 export interface NetworkErrorEvent {
@@ -276,6 +265,21 @@ export interface DashboardSessionsEvent {
 export interface SessionStatusEvent {
   session: SessionId;
   connected: boolean;
+  /**
+   * 目标当前这次页面加载的标识（SDK 每次加载随机生成，随连接参数上报）。
+   * 变化 = 页面刷新/重进：面板据此清掉上一次加载的 console/network 等历史，
+   * 与 DevTools 默认不 preserve log 的行为一致。断线重连不变。
+   */
+  loadId?: string;
+}
+
+/**
+ * 正在调试某 session 的面板数量变化（Server → SDK）。
+ * SDK 据此启停"仅调试时才有意义"的高频采样（FPS / 内存），
+ * 无人观看的会话不再持续产出噪声占满 backlog 与录制。
+ */
+export interface SessionWatchersEvent {
+  count: number;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -459,6 +463,8 @@ export interface SourcesFetchResult {
   sourceMappingURL?: string;
   /** SDK 代取/解析出的 source map JSON 字符串（外链与内联 base64 均归一为此） */
   map?: string;
+  /** 有 sourceMappingURL 但 map 取不到/解不开的原因（HTTP 状态、跨域、超限…）；面板据此提示手动导入 */
+  mapError?: string;
   /** 取脚本失败时的原因；取到则为空 */
   error?: string;
   /** content/map 因超过体积上限被截断时为 true */
@@ -637,6 +643,8 @@ export interface MethodData {
   // Dashboard 事件 (Server → debugger)
   'dashboard.sessions': DashboardSessionsEvent;
   'session.status': SessionStatusEvent;
+  // Server → SDK
+  'session.watchers': SessionWatchersEvent;
   // 命令 (debugger → SDK)
   'eval.run': EvalRunCmd;
   'trace.set': TraceSetCmd;
@@ -757,6 +765,8 @@ export const KNOWN_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   // Dashboard 事件 (Server → debugger)
   'dashboard.sessions',
   'session.status',
+  // Server → SDK
+  'session.watchers',
   // 命令 (debugger → SDK)
   'eval.run',
   'trace.set',

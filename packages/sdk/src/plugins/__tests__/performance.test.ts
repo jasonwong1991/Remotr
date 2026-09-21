@@ -38,14 +38,27 @@ class FakePerformanceObserver {
   }
 }
 
-function makeTransport(): { transport: Transport; sent: Array<{ method: string; data: any }> } {
+function makeTransport(): {
+  transport: Transport;
+  sent: Array<{ method: string; data: any }>;
+  /** 模拟服务端推送观看者数(驱动 FPS/内存高频采样启停) */
+  setWatchers: (count: number) => void;
+} {
   const sent: Array<{ method: string; data: any }> = [];
+  const serverHandlers = new Map<string, (data: unknown) => void>();
   const transport = {
     send: vi.fn((method: string, data: unknown) => {
       sent.push({ method, data: data as any });
     }),
+    onServerEvent: vi.fn((method: string, handler: (data: unknown) => void) => {
+      serverHandlers.set(method, handler);
+    }),
+    onConnected: vi.fn(),
   } as unknown as Transport;
-  return { transport, sent };
+  const setWatchers = (count: number): void => {
+    serverHandlers.get('session.watchers')?.({ count });
+  };
+  return { transport, sent, setWatchers };
 }
 
 describe('installPerformance', () => {
@@ -114,20 +127,43 @@ describe('installPerformance', () => {
     uninstall();
   });
 
-  it('samples JS heap on an interval when performance.memory exists', () => {
+  it('samples JS heap on an interval only while a debugger is watching', () => {
     vi.useFakeTimers();
     (performance as any).memory = {
       usedJSHeapSize: 1000,
       totalJSHeapSize: 2000,
       jsHeapSizeLimit: 4000,
     };
-    const { transport, sent } = makeTransport();
+    const { transport, sent, setWatchers } = makeTransport();
     const uninstall = installPerformance(transport);
+
+    // 无人观看:不采样
+    vi.advanceTimersByTime(4000);
+    expect(sent.find((e) => e.method === 'perf.memory')).toBeUndefined();
+
+    // 面板接入:开始按间隔采样
+    setWatchers(1);
     vi.advanceTimersByTime(2000);
     const mem = sent.find((e) => e.method === 'perf.memory');
     expect(mem!.data.usedJSHeapSize).toBe(1000);
     expect(mem!.data.jsHeapSizeLimit).toBe(4000);
+
+    // 面板离开:停止采样
+    const before = sent.filter((e) => e.method === 'perf.memory').length;
+    setWatchers(0);
+    vi.advanceTimersByTime(4000);
+    expect(sent.filter((e) => e.method === 'perf.memory').length).toBe(before);
     uninstall();
+  });
+
+  it('starts FPS sampling via rAF only when watched', () => {
+    const { transport, setWatchers } = makeTransport();
+    const uninstall = installPerformance(transport);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+    setWatchers(2);
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+    uninstall();
+    expect(cancelAnimationFrame).toHaveBeenCalled();
   });
 
   it('stops reporting after uninstall and disconnects observers', () => {

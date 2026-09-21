@@ -16,9 +16,43 @@ import { debugWarn } from '../internals.js';
  */
 
 const MAX_FRAME = 50_000;
+/**
+ * 单连接每秒最多上报的帧数（收发合计）。高频推送（行情/游戏/心跳刷屏）会把
+ * 服务端 backlog 与面板帧表全部挤成同一条连接的流水；超出的帧丢弃，窗口结束时
+ * 用一条汇总占位帧告知丢弃数。
+ */
+const MAX_FRAMES_PER_SEC = 50;
 
 function clampFrame(s: string): string {
   return s.length > MAX_FRAME ? s.slice(0, MAX_FRAME) + '…[truncated]' : s;
+}
+
+/** 按连接的滑动窗口限速器 */
+interface RateWindow {
+  start: number;
+  count: number;
+  dropped: number;
+}
+
+const rateWindows = new Map<string, RateWindow>();
+
+/**
+ * 判断本帧是否可上报；不可时累计丢弃数。窗口翻转时若有丢弃，调用 onDropped
+ * 让调用方先发一条汇总帧。
+ */
+function admitFrame(connectionId: string, ts: number, onDropped: (n: number) => void): boolean {
+  let w = rateWindows.get(connectionId);
+  if (!w || ts - w.start >= 1000) {
+    if (w && w.dropped > 0) onDropped(w.dropped);
+    w = { start: ts, count: 0, dropped: 0 };
+    rateWindows.set(connectionId, w);
+  }
+  if (w.count >= MAX_FRAMES_PER_SEC) {
+    w.dropped++;
+    return false;
+  }
+  w.count++;
+  return true;
 }
 
 function now(): number {
@@ -88,6 +122,21 @@ export function installWsCapture(transport: Transport, internalWsPrefix: string)
   };
 }
 
+/** 限速窗口内有丢帧时补一条汇总占位帧（size 0），让面板知道有遗漏而不是"没流量" */
+function sendDroppedNotice(transport: Transport, connectionId: string, n: number, ts: number): void {
+  try {
+    transport.send('network.ws.message', {
+      connectionId,
+      data: `[remotr] ${n} frames dropped (rate limit ${MAX_FRAMES_PER_SEC}/s)`,
+      size: 0,
+      truncated: true,
+      timestamp: ts,
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 /** 每个被采集实例的 connectionId（内部 transport socket 不入表 → send 时按缺失跳过） */
 const wsIds = new WeakMap<WebSocket, string>();
 
@@ -130,6 +179,8 @@ function hookWebSocket(transport: Transport, internalWsPrefix: string): (() => v
           const cid = wsIds.get(this);
           if (!cid) return;
           try {
+            const ts = now();
+            if (!admitFrame(cid, ts, (n) => sendDroppedNotice(transport, cid, n, ts))) return;
             const p = describePayload(ev.data);
             transport.send('network.ws.message', {
               connectionId: cid,
@@ -137,7 +188,7 @@ function hookWebSocket(transport: Transport, internalWsPrefix: string): (() => v
               size: p.size,
               truncated: p.truncated || undefined,
               binary: p.binary || undefined,
-              timestamp: now(),
+              timestamp: ts,
             });
           } catch {
             /* ignore */
@@ -147,6 +198,7 @@ function hookWebSocket(transport: Transport, internalWsPrefix: string): (() => v
         this.addEventListener('close', (ev: CloseEvent) => {
           const cid = wsIds.get(this);
           if (!cid) return;
+          rateWindows.delete(cid);
           try {
             transport.send('network.ws.close', {
               connectionId: cid,
@@ -181,6 +233,8 @@ function hookWebSocket(transport: Transport, internalWsPrefix: string): (() => v
       const cid = wsIds.get(this);
       if (cid) {
         try {
+          const ts = now();
+          if (!admitFrame(cid, ts, (n) => sendDroppedNotice(transport, cid, n, ts))) return;
           const p = describePayload(data);
           transport.send('network.ws.send', {
             connectionId: cid,
@@ -188,7 +242,7 @@ function hookWebSocket(transport: Transport, internalWsPrefix: string): (() => v
             size: p.size,
             truncated: p.truncated || undefined,
             binary: p.binary || undefined,
-            timestamp: now(),
+            timestamp: ts,
           });
         } catch {
           /* ignore */

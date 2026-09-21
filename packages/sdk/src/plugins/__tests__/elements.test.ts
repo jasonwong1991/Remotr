@@ -63,7 +63,8 @@ describe('Elements Plugin', () => {
       } as CSSStyleDeclaration;
     });
 
-    installElements(transport);
+    // 测试走无 rrweb 镜像的顺序 ID 路径（有镜像时 mirror 是唯一权威源，不再 rebuild）
+    installElements(transport, false);
   });
 
   afterEach(() => {

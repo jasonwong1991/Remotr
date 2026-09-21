@@ -33,10 +33,11 @@ export class ElementOverlay {
     this.overlayEl.style.display = 'block';
 
     // 构建标签文本：标签名#id.class WxH
+    // 用 classList 而非 className：SVG 元素的 className 是 SVGAnimatedString，没有 split
     const tag = element.tagName.toLowerCase();
     const id = element.id ? `#${element.id}` : '';
-    const classes = element.className
-      ? `.${element.className.split(/\s+/).filter(Boolean).join('.')}`
+    const classes = element.classList.length
+      ? `.${Array.from(element.classList).join('.')}`
       : '';
     const dimensions = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
     const labelText = `${tag}${id}${classes} ${dimensions}`;

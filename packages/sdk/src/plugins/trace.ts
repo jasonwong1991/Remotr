@@ -143,20 +143,30 @@ export function installTrace(transport: Transport): () => void {
     return { ok: true };
   }
 
-  /** 构造包装函数:透传 this / 返回值 / 异常,命中时上报 */
+  /**
+   * 构造包装函数:透传 this / 返回值 / 异常,命中时上报。
+   * 被 `new` 调用时(class / 构造函数)走 Reflect.construct 并保留 new.target,
+   * 否则 class 被追踪后一调用就抛 "Class constructor cannot be invoked without 'new'"。
+   */
   function makeWrapper(
     tp: TracepointDef,
     original: (...args: unknown[]) => unknown,
   ): (...args: unknown[]) => unknown {
+    const condition = tp.condition ? compileCondition(tp.condition) : null;
     function wrapped(this: unknown, ...args: unknown[]): unknown {
+      const newTarget = new.target as unknown as (new (...a: unknown[]) => unknown) | undefined;
+      const invoke = (): unknown =>
+        newTarget
+          ? Reflect.construct(original as unknown as new (...a: unknown[]) => unknown, args, newTarget)
+          : original.apply(this, args);
       // 重入(上报路径调用了被追踪的内建函数):只执行业务,完全跳过计时与上报
-      if (reporting) return original.apply(this, args);
+      if (reporting) return invoke();
       const start = now();
       let ret: unknown;
       let thrown: unknown;
       let didThrow = false;
       try {
-        ret = original.apply(this, args);
+        ret = invoke();
         return ret;
       } catch (err) {
         didThrow = true;
@@ -167,9 +177,7 @@ export function installTrace(transport: Transport): () => void {
         reporting = true;
         try {
           const durationMs = now() - start;
-          const pass = tp.condition
-            ? evalCondition(tp.condition, args, didThrow ? undefined : ret, this)
-            : true;
+          const pass = condition ? evalCondition(condition, args, didThrow ? undefined : ret, this) : true;
           if (pass) {
             const seq = (seqs.get(tp.id) ?? 0) + 1;
             seqs.set(tp.id, seq);
@@ -196,6 +204,9 @@ export function installTrace(transport: Transport): () => void {
     try {
       Object.defineProperty(wrapped, 'name', { value: original.name, configurable: true });
       Object.defineProperty(wrapped, 'length', { value: original.length, configurable: true });
+      // 共享 prototype:new wrapped() 产出的实例 instanceof 原构造函数仍成立
+      const proto = (original as unknown as { prototype?: object }).prototype;
+      if (proto) (wrapped as unknown as { prototype: object }).prototype = proto;
       // 拷贝挂在函数上的自有静态属性(如 fn.foo = ...)
       Object.assign(wrapped, original);
     } catch {
@@ -229,14 +240,27 @@ function resolvePath(path: string): { owner: Record<string, unknown>; key: strin
   return { owner: owner as Record<string, unknown>, key: parts[parts.length - 1] };
 }
 
+type ConditionFn = (args: unknown[], ret: unknown, self: unknown) => unknown;
+
+/**
+ * 设置追踪点时编译一次过滤条件(每次命中都 new Function 会把热路径变成编译循环)。
+ * 语法错误时返回 null → 视为无条件,fail-open。
+ */
+function compileCondition(condition: string): ConditionFn | null {
+  try {
+    // 间接构造,在全局作用域求值(与 page 插件的 eval.run 一致的安全边界)
+    return new Function('args', 'ret', 'self', `return (${condition});`) as ConditionFn;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 在调用之后求值过滤条件,可引用 args(参数数组)、ret(返回值)、self(this)。
  * 条件抛错时 fail-open(返回 true 照常上报),避免"设了条件却静默无输出"的困惑。
  */
-function evalCondition(condition: string, args: unknown[], ret: unknown, self: unknown): boolean {
+function evalCondition(fn: ConditionFn, args: unknown[], ret: unknown, self: unknown): boolean {
   try {
-    // 间接构造,在全局作用域求值(与 page 插件的 eval.run 一致的安全边界)
-    const fn = new Function('args', 'ret', 'self', `return (${condition});`);
     return !!fn(args, ret, self);
   } catch {
     return true; // fail-open
