@@ -5,7 +5,7 @@ import {
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { EvalRunResult, SessionId, TraceSetResult } from '@remotr/shared';
-import { RemotrClient, SessionConnection } from './client.js';
+import { RemotrClient, SessionConnection, type ErrorRecord } from './client.js';
 import { resolveStackVia, type ResolvedFrameOut } from './resolve.js';
 
 /** 输出上限：单次工具响应超过此字节数即截断并标记 truncated（R6）。 */
@@ -15,14 +15,36 @@ const SNIPPET_RADIUS = 5;
 
 /**
  * room 作为每个工具的可选入参：配置里的 /mcp 不必带 ?room=，
- * 房间名由「复制给 AI 修复」的上下文（`- room: xxx`）带进来，逐次调用传参。
+ * 房间名由「复制给 AI 修复」的上下文（`- project: xxx`）带进来，逐次调用传参。
+ * 面板对用户叫 project，协议/服务端叫 room，同一概念：两个参数名都接受。
  * 省略时回落到服务端配置的默认房间，兼容既有的 ?room= / --room 用法。
  */
 const ROOM_PROP = {
-  room: {
+  project: {
     type: 'string',
     description:
-      'Room name. Take it from the pasted Remotr context line "- room: xxx". Omit only if your MCP URL already pins a room (…/mcp?room=…). Use remotr_list_rooms to discover it.',
+      'Project name. Take it from the pasted Remotr context line "- project: xxx". Same thing as "room" (the panel calls rooms "projects"). Omit only if your MCP URL already pins a room (…/mcp?room=…). Use remotr_list_rooms to discover it.',
+  },
+  room: {
+    type: 'string',
+    description: 'Alias of "project" (server-side name). Pass either one, not both.',
+  },
+} as const;
+
+/** 面板「复制给 AI 修复」附带的起点时间：只看这之后的错误，避免重修上一轮已处理的历史 */
+const SINCE_PROP = {
+  since: {
+    type: 'number',
+    description:
+      'Epoch ms. Only consider errors captured at or after this time. Take it from the pasted context line "- since: <ms>". Errors older than this were already handled in a previous round — ignore them. Indexes are relative to the filtered list, so pass the same since to every error tool in one round.',
+  },
+} as const;
+
+const ERROR_INDEX_PROP = {
+  errorIndex: {
+    type: 'number',
+    description:
+      'Index from remotr_get_errors (called with the same since). Omit to take the latest error.',
   },
 } as const;
 
@@ -48,10 +70,10 @@ const TOOLS: Tool[] = [
   {
     name: 'remotr_get_errors',
     description:
-      'List recent runtime errors (uncaught errors, unhandled rejections, console.error) for a session, with raw (minified) stacks. Use the returned index with remotr_resolve_error / remotr_get_context / remotr_diagnose.',
+      'List runtime errors (uncaught errors, unhandled rejections, console.error) for a session, oldest first, with raw (minified) stacks. Pass since (from the pasted context) so errors fixed in an earlier round are not listed again. Use the returned index with remotr_resolve_error / remotr_get_context / remotr_diagnose together with the same since.',
     inputSchema: {
       type: 'object',
-      properties: { ...SESSION_PROPS },
+      properties: { ...SESSION_PROPS, ...SINCE_PROP },
       required: ['deviceId', 'pageId'],
     },
   },
@@ -63,7 +85,8 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: {
         ...SESSION_PROPS,
-        errorIndex: { type: 'number', description: 'Index from remotr_get_errors (default 0)' },
+        ...SINCE_PROP,
+        ...ERROR_INDEX_PROP,
       },
       required: ['deviceId', 'pageId'],
     },
@@ -76,7 +99,8 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: {
         ...SESSION_PROPS,
-        errorIndex: { type: 'number', description: 'Index from remotr_get_errors (default 0)' },
+        ...SINCE_PROP,
+        ...ERROR_INDEX_PROP,
       },
       required: ['deviceId', 'pageId'],
     },
@@ -84,12 +108,13 @@ const TOOLS: Tool[] = [
   {
     name: 'remotr_diagnose',
     description:
-      'One-call triage for the latest (or a specified) error: message + source-map-resolved stack + code snippet at the top frame + recent console + network timeline + a one-line suggested cause. Start here when a page is misbehaving.',
+      'One-call triage for the latest (or a specified) error: message + source-map-resolved stack + code snippet at the top frame + recent console + network timeline + a one-line suggested cause. Start here when a page is misbehaving; pass since from the pasted context so an already-fixed older error is not picked.',
     inputSchema: {
       type: 'object',
       properties: {
         ...SESSION_PROPS,
-        errorIndex: { type: 'number', description: 'Index from remotr_get_errors (default 0 = latest listed)' },
+        ...SINCE_PROP,
+        ...ERROR_INDEX_PROP,
       },
       required: ['deviceId', 'pageId'],
     },
@@ -148,6 +173,26 @@ const TOOLS: Tool[] = [
   },
 ];
 
+/** since 入参：epoch ms；非法/缺省视为不过滤 */
+function sinceFromArgs(args: Record<string, unknown>): number | undefined {
+  const n = Number(args.since);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * 按 errorIndex 选错误；缺省取最新一条（用户点「复制给 AI 修复」通常是为刚发生的问题）。
+ * 编号与 remotr_get_errors（同一 since）一致：0 = 过滤后最早。
+ */
+function pickError(errors: ErrorRecord[], args: Record<string, unknown>, since: number | undefined): ErrorRecord {
+  const idx = args.errorIndex === undefined ? errors.length - 1 : Number(args.errorIndex);
+  const err = errors[idx];
+  if (!err) {
+    const scope = since !== undefined ? ` since ${new Date(since).toISOString()}` : '';
+    throw new Error(`No error at index ${idx} (have ${errors.length}${scope})`);
+  }
+  return err;
+}
+
 function sessionFromArgs(args: Record<string, unknown>): SessionId {
   const deviceId = String(args.deviceId ?? '');
   const pageId = String(args.pageId ?? '');
@@ -191,8 +236,13 @@ async function dispatch(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  // 房间名逐次调用传入，缺省由 client 回落到配置里的默认房间
-  const room = typeof args.room === 'string' ? args.room : undefined;
+  // 房间名逐次调用传入（面板叫 project，服务端叫 room，两者等价），缺省由 client 回落到配置里的默认房间
+  const room =
+    typeof args.room === 'string' && args.room
+      ? args.room
+      : typeof args.project === 'string' && args.project
+        ? args.project
+        : undefined;
   switch (name) {
     case 'remotr_list_rooms': {
       const rooms = await client.listRooms();
@@ -217,10 +267,12 @@ async function dispatch(
 
     case 'remotr_get_errors': {
       const session = sessionFromArgs(args);
+      const since = sinceFromArgs(args);
       return withSession(client, session, room, async (conn) => {
-        const errors = conn.errors();
+        const errors = conn.errors(since);
         return {
           count: errors.length,
+          since,
           errors: errors.map((e) => ({
             index: e.index,
             kind: e.kind,
@@ -231,19 +283,19 @@ async function dispatch(
           })),
           hint:
             errors.length > 0
-              ? 'Call remotr_diagnose (or remotr_get_context) with an errorIndex for resolved source + full context.'
-              : 'No errors captured in the current backlog.',
+              ? 'Indexes are oldest-first and relative to this since. Call remotr_diagnose (or remotr_get_context) with the same since and an errorIndex (omit it for the latest) for resolved source + full context.'
+              : since !== undefined
+                ? 'No errors captured since the given time. Older backlog errors (before since) were already handled — do not re-fix them.'
+                : 'No errors captured in the current backlog.',
         };
       });
     }
 
     case 'remotr_resolve_error': {
       const session = sessionFromArgs(args);
-      const errorIndex = Number(args.errorIndex ?? 0);
+      const since = sinceFromArgs(args);
       return withSession(client, session, room, async (conn) => {
-        const errors = conn.errors();
-        const err = errors[errorIndex];
-        if (!err) throw new Error(`No error at index ${errorIndex} (have ${errors.length})`);
+        const err = pickError(conn.errors(since), args, since);
         if (!err.stack) return { error: err.message, frames: [], note: 'Error has no stack to resolve.' };
         const frames = (await resolveStackVia(conn, err.stack, SNIPPET_RADIUS)).map(trimSnippet);
         return { error: err.message, frames };
@@ -252,11 +304,9 @@ async function dispatch(
 
     case 'remotr_get_context': {
       const session = sessionFromArgs(args);
-      const errorIndex = Number(args.errorIndex ?? 0);
+      const since = sinceFromArgs(args);
       return withSession(client, session, room, async (conn) => {
-        const errors = conn.errors();
-        const err = errors[errorIndex];
-        if (!err) throw new Error(`No error at index ${errorIndex} (have ${errors.length})`);
+        const err = pickError(conn.errors(since), args, since);
         const info = conn.systemInfo();
         const frames = err.stack
           ? (await resolveStackVia(conn, err.stack, SNIPPET_RADIUS)).map(trimSnippet)
@@ -280,11 +330,9 @@ async function dispatch(
 
     case 'remotr_diagnose': {
       const session = sessionFromArgs(args);
-      const errorIndex = Number(args.errorIndex ?? 0);
+      const since = sinceFromArgs(args);
       return withSession(client, session, room, async (conn) => {
-        const errors = conn.errors();
-        const err = errors[errorIndex];
-        if (!err) throw new Error(`No error at index ${errorIndex} (have ${errors.length})`);
+        const err = pickError(conn.errors(since), args, since);
         const info = conn.systemInfo();
         const frames = err.stack
           ? (await resolveStackVia(conn, err.stack, SNIPPET_RADIUS)).map(trimSnippet)

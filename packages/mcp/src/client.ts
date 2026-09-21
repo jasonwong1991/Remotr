@@ -55,6 +55,7 @@ export interface TraceHitRecord {
 export interface RoomSummary {
   id: string;
   hasSdk: boolean;
+  online: number;
   debuggers: number;
   sessions: number;
 }
@@ -198,10 +199,16 @@ export class SessionConnection {
     return undefined;
   }
 
-  /** 页面错误 + error 级 console，按出现顺序编号 */
-  errors(): ErrorRecord[] {
+  /**
+   * 页面错误 + error 级 console，按出现顺序编号（0 = 最早）。
+   * `since`（epoch ms）用于只看某时刻之后的错误：面板「复制给 AI 修复」把当前可见
+   * 记录的起点带给 AI，早于它的都是上一轮已经处理过的历史，不该再被当成待修问题。
+   * 编号是过滤后的下标，同一轮调用必须传同一个 since。
+   */
+  errors(since?: number): ErrorRecord[] {
     const out: ErrorRecord[] = [];
     for (const env of this.events) {
+      if (since !== undefined && env.timestamp < since) continue;
       if (env.method === 'page.error') {
         const e = env.data as PageErrorEvent;
         out.push({

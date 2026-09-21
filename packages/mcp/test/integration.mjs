@@ -84,8 +84,44 @@ async function main() {
   check(frames[0].original?.line === 2, `还原到原始行 2（实际 ${frames[0].original?.line}）`);
   check(!!frames[0].snippet && frames[0].snippet.lines.length > 0, '附带原始源码片段');
 
-  conn.close();
+  // 6. since 过滤：晚于首个错误的第二个错误，按 since 只剩它一个，且编号从 0 重排
+  await delay(20);
+  const since = Date.now();
+  await delay(20);
+  sdk.send(encodeFrame({ kind: 'msg', envelope: makeEnvelope('page.error', { message: 'second' }, 'sdk') }));
+  await delay(200);
+  const conn2 = await client.connectSession({ deviceId: 'dev1', pageId: 'page1' });
+  await conn2.waitForBacklog();
+  check(conn2.errors().length === 2, '不带 since 时 backlog 里有 2 个错误');
+  const filtered = conn2.errors(since);
+  check(filtered.length === 1 && filtered[0].message === 'second' && filtered[0].index === 0, 'errors(since) 只剩 "second" 且 index 重排为 0');
+  conn2.close();
+
+  // 7. 页面刷新（新 loadId 重连）清掉上一次加载的事件 backlog；同 loadId 重连不清
   sdk.close();
+  await delay(100);
+  const sdk2 = new WebSocket(`ws://127.0.0.1:${port}/ws?room=default&role=sdk&deviceId=dev1&pageId=page1&load=L2`);
+  await once(sdk2, 'open');
+  sdk2.send(encodeFrame({ kind: 'msg', envelope: makeEnvelope('page.error', { message: 'after-reload' }, 'sdk') }));
+  await delay(200);
+  const conn3 = await client.connectSession({ deviceId: 'dev1', pageId: 'page1' });
+  await conn3.waitForBacklog();
+  const afterReload = conn3.errors();
+  check(afterReload.length === 1 && afterReload[0].message === 'after-reload', '新 loadId 接入后旧错误被清空，只剩本次加载的错误');
+  conn3.close();
+
+  sdk2.close();
+  await delay(100);
+  const sdk3 = new WebSocket(`ws://127.0.0.1:${port}/ws?room=default&role=sdk&deviceId=dev1&pageId=page1&load=L2`);
+  await once(sdk3, 'open');
+  await delay(100);
+  const conn4 = await client.connectSession({ deviceId: 'dev1', pageId: 'page1' });
+  await conn4.waitForBacklog();
+  check(conn4.errors().length === 1, '同 loadId 断线重连不清 backlog');
+  conn4.close();
+  sdk3.close();
+
+  conn.close();
   wss.close();
   httpServer.close();
   recorder.destroy();
