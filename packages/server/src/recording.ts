@@ -61,9 +61,27 @@ function localDate(ts: number): string {
   return `${y}-${m}-${day}`;
 }
 
-/** 文件名/目录名安全化：仅保留字母数字与 . _ -，其余替换为 _ */
+/** 短哈希（cyrb53 低 32 位，8 位 hex），用于给被改写过的名字补唯一后缀 */
+function shortHash(str: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  return (h1 >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * 文件名/目录名安全化：仅保留字母数字与 . _ -，其余替换为 _。
+ * 改写或截断过的名字附加原文哈希后缀，避免 "a/b" 与 "a_b" 这类不同名落到同一目录。
+ */
 function sanitize(s: string): string {
-  return s.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || '_';
+  const safe = s.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
+  if (!safe) return `_-${shortHash(s)}`;
+  return safe === s ? safe : `${safe}-${shortHash(s)}`;
 }
 
 /** 会话目录名：deviceId__pageId（仅用于人类可读；权威信息在 meta.json） */
@@ -170,6 +188,8 @@ export class RecordingManager {
    * @param baseline  段头基线生产函数：返回 system.info + rrweb backlog 的 JSON 行
    * @param meta      会话元信息（写入 meta.json）
    * @param method    来帧的方法名（轮转门控用）
+   * @param transient 瞬时采样帧（FPS/内存）：照常落盘但不计入轮转阈值，
+   *                  否则它们的流水会让空闲段也频繁轮转、反复拷贝基线
    */
   append(
     room: string,
@@ -178,6 +198,7 @@ export class RecordingManager {
     baseline: () => string[],
     meta: SessionMeta,
     method: string,
+    transient = false,
   ): void {
     if (!this.cfg.enabled) return;
     const k = this.key(room, session);
@@ -214,7 +235,7 @@ export class RecordingManager {
     }
 
     this.enqueue(rec, raw);
-    rec.eventCount++;
+    if (!transient) rec.eventCount++;
   }
 
   /** 入队/写入一行。流未就绪则缓冲，就绪则直写。 */
@@ -271,6 +292,13 @@ export class RecordingManager {
         await writeFile(join(dir, 'meta.json'), JSON.stringify(meta)).catch(() => {});
         // ua 来自 system.info；没拿到说明 meta 还不完整，下次轮转重写补全
         rec.metaWritten = Boolean(meta.ua);
+      }
+      // 异步打开期间会话可能已断开（closeSession 把 rec 摘掉了）：此时再建流没人会关，
+      // 会泄漏 FD 并留下空文件 —— 直接放弃本段。
+      if (this.recorders.get(this.key(rec.room, rec.session)) !== rec) {
+        rec.opening = false;
+        rec.buffer = [];
+        return;
       }
       const stream = createWriteStream(filePath, { flags: 'a' });
       // 磁盘写错误（ENOSPC/EACCES/FD 耗尽等）不致命：丢弃当前段，

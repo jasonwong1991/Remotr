@@ -18,6 +18,15 @@ export interface ServerOptions {
   recording?: RecordingConfig;
 }
 
+/**
+ * 单帧上限。ws 默认 100MB 过于宽松；这里按最大合法帧留余量：
+ * sources.fetch 回复 = 脚本正文 + ≤8MB 的 map，rrweb 全量快照通常在个位数 MB。
+ */
+const MAX_WS_PAYLOAD = 32 * 1024 * 1024;
+
+/** 已告警过的未知方法名：同一方法只警告一次，防止老/新版本混跑时刷日志 */
+const warnedUnknownMethods = new Set<string>();
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -51,7 +60,7 @@ export function startServer(opts: ServerOptions) {
     return `http://${host}:${port}`;
   };
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD });
 
   httpServer.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
@@ -88,6 +97,7 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
   const deviceId = url.searchParams.get('deviceId') || undefined;
   const pageId = url.searchParams.get('pageId') || undefined;
   const identity = url.searchParams.get('identity') || undefined;
+  const loadId = url.searchParams.get('load') || undefined;
 
   const room = rooms.get(roomId);
 
@@ -99,7 +109,7 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
       ws.close(1008, 'SDK must provide deviceId and pageId');
       return;
     }
-    member = room.addSdk(ws, { deviceId, pageId, identity });
+    member = room.addSdk(ws, { deviceId, pageId, identity, loadId });
   } else {
     // Debugger：有 deviceId/pageId 则为 Session 模式，否则为 Dashboard 模式
     const targetSession = deviceId && pageId ? { deviceId, pageId } : null;
@@ -154,7 +164,10 @@ function handleWs(ws: WebSocket, url: URL, rooms: RoomRegistry): void {
         // newer SDK/panel builds); the registry keeps this in sync with the
         // protocol so legitimate methods don't spam warnings.
         if (!KNOWN_METHODS.has(frame.envelope.method as MethodName)) {
-          console.warn(`[Security] Unknown method '${frame.envelope.method}' from ${member.role}`);
+          if (!warnedUnknownMethods.has(frame.envelope.method)) {
+            warnedUnknownMethods.add(frame.envelope.method);
+            console.warn(`[Security] Unknown method '${frame.envelope.method}' from ${member.role} (further occurrences suppressed)`);
+          }
           // Don't return - allow forward compatibility with new methods
         }
       }
@@ -252,12 +265,13 @@ async function handleHttp(
     return;
   }
 
-  // Sessions API（特定 room 的所有 session）
+  // Sessions API（特定 room 的所有 session）。只读查找：不存在的 room 返回空表，
+  // 不能顺手创建——否则任何人 GET 一下就会在首页列表里造出一个幽灵项目。
   if (pathname.startsWith('/api/rooms/') && pathname.endsWith('/sessions')) {
     const roomId = pathname.slice('/api/rooms/'.length, -'/sessions'.length);
-    const room = rooms.get(roomId);
+    const room = rooms.peek(roomId);
     res.writeHead(200, { 'Content-Type': MIME['.json'] });
-    res.end(JSON.stringify({ room: roomId, sessions: room.getAllSessions() }));
+    res.end(JSON.stringify({ room: roomId, sessions: room ? room.getAllSessions() : [] }));
     return;
   }
 

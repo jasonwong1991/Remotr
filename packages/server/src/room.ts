@@ -6,7 +6,7 @@ import type {
   SystemInfoEvent,
   DashboardSessionsEvent,
 } from '@remotr/shared';
-import { encodeFrame, makeEnvelope } from '@remotr/shared';
+import { decodeFrame, encodeFrame, makeEnvelope } from '@remotr/shared';
 import type { RecordingManager, SessionMeta } from './recording.js';
 
 /** SDK 端连接的 session 信息 */
@@ -14,14 +14,35 @@ interface SessionParams {
   deviceId: string;
   pageId: string;
   identity?: string;
+  /** 本次页面加载标识（SDK 随连接参数上报）；刷新变、断线重连不变 */
+  loadId?: string;
 }
 
-/** 每个 session 的 backlog 状态 */
-interface SessionBacklog {
-  lastSystemInfo: Frame | null;
-  rrwebBacklog: Frame[];
-  eventBacklog: Frame[];
+/** backlog 里的一条 rrweb 帧：原始 JSON 行 + 事件时间戳（录制基线做时间重定位用，免再解析） */
+interface RrwebBacklogEntry {
+  raw: string;
+  ts: number | undefined;
 }
+
+/**
+ * 每个 session 的 backlog 状态。
+ * 全部存**原始 JSON 字符串**而非解析后的对象：回放/录制时零拷贝直接发，
+ * 且字符串比对象树省 3~5 倍堆内存（pm2 512MB 重启会清空所有房间，内存就是容量）。
+ */
+interface SessionBacklog {
+  lastSystemInfo: string | null;
+  rrwebBacklog: RrwebBacklogEntry[];
+  eventBacklog: string[];
+  /** 产生当前 eventBacklog 的页面加载标识；换了就说明页面刷新过 */
+  loadId?: string;
+}
+
+/**
+ * 瞬时采样类事件：只对"正在看"的面板有意义，不进 backlog（新接入的面板 1~2s 内就会
+ * 收到新样本），也不计入录制轮转阈值——否则空闲页面的 FPS/内存流水会把 500 条
+ * backlog 里真正有用的 console/network 全部挤掉。
+ */
+const TRANSIENT_METHODS: ReadonlySet<string> = new Set(['perf.fps', 'perf.memory']);
 
 /** SDK 成员 */
 interface SdkMember {
@@ -132,6 +153,11 @@ export class Room {
     return this.sdks.size > 0;
   }
 
+  /** 在线 session 数（当前连着的 SDK） */
+  onlineCount(): number {
+    return this.sdks.size;
+  }
+
   debuggerCount(): number {
     return this.debuggers.size;
   }
@@ -161,8 +187,24 @@ export class Room {
     this.sdks.set(key, member);
     // 清除离线记录
     this.offlineSessions.delete(key);
-    // 通知正在调试该 session 的 Debugger：目标已上线
+    // 页面刷新（loadId 变化）= 新起点：清掉上一次加载的事件 backlog，否则旧报错会一直
+    // 排在 MCP remotr_get_errors 的前面，AI 在新会话里会去"修"早已修好的问题。
+    // rrweb backlog 由新加载的 Meta 事件自行重置；断线重连 loadId 不变，什么都不清。
+    // 在这里（连接建立时）而不是收到 system.info 时清：boot 期错误经离线队列先于
+    // system.info 到达，若等 system.info 再清会把新加载的首批帧一起抹掉。
+    if (session.loadId) {
+      const backlog = this.backlogs.get(key);
+      if (backlog && backlog.loadId !== session.loadId) {
+        backlog.eventBacklog = [];
+        backlog.lastSystemInfo = null;
+      }
+      if (backlog) backlog.loadId = session.loadId;
+      else this.backlogs.set(key, { lastSystemInfo: null, rrwebBacklog: [], eventBacklog: [], loadId: session.loadId });
+    }
+    // 通知正在调试该 session 的 Debugger：目标已上线（带 loadId，面板据此判断是否刷新过）
     this.notifySessionStatus(session, true);
+    // 告知（可能是重连的）SDK 当前有几个面板在看，决定是否开高频采样
+    this.notifyWatchers(session);
     return member;
   }
 
@@ -170,6 +212,7 @@ export class Room {
   addDebugger(ws: WebSocket, targetSession: SessionId | null): DebuggerMember {
     const member: DebuggerMember = { ws, role: 'debugger', targetSession };
     this.debuggers.add(member);
+    if (targetSession) this.notifyWatchers(targetSession);
     return member;
   }
 
@@ -214,6 +257,7 @@ export class Room {
       for (const [id, pending] of this.pendingReplies) {
         if (pending.debugger === member) this.pendingReplies.delete(id);
       }
+      if (member.targetSession) this.notifyWatchers(member.targetSession);
     }
   }
 
@@ -234,16 +278,20 @@ export class Room {
       member.ws,
       encodeFrame({
         kind: 'msg',
-        envelope: makeEnvelope('session.status', { session: member.targetSession, connected }, 'debugger'),
+        envelope: makeEnvelope(
+          'session.status',
+          { session: member.targetSession, connected, loadId: sdk?.session.loadId },
+          'debugger',
+        ),
       }),
     );
 
     const backlog = this.backlogs.get(key);
     if (!backlog) return;
 
-    if (backlog.lastSystemInfo) safeSend(member.ws, encodeFrame(backlog.lastSystemInfo));
-    for (const f of backlog.rrwebBacklog) safeSend(member.ws, encodeFrame(f));
-    for (const f of backlog.eventBacklog) safeSend(member.ws, encodeFrame(f));
+    if (backlog.lastSystemInfo) safeSend(member.ws, backlog.lastSystemInfo);
+    for (const f of backlog.rrwebBacklog) safeSend(member.ws, f.raw);
+    for (const raw of backlog.eventBacklog) safeSend(member.ws, raw);
   }
 
   /**
@@ -285,10 +333,11 @@ export class Room {
           () => this.buildRecordingBaseline(key, from, anchorTs),
           this.buildRecordingMeta(from),
           frame.envelope.method,
+          TRANSIENT_METHODS.has(frame.envelope.method),
         );
       }
 
-      this.recordBacklog(key, frame);
+      this.recordBacklog(key, frame, raw);
 
       // 路由到订阅了该 session 的 Debugger（带背压保护，慢消费者丢帧而非堆内存）
       for (const dbg of this.debuggers) {
@@ -345,12 +394,33 @@ export class Room {
     sdk.ws.send(raw);
   }
 
+  /** 把"有几个面板正在看这个 session"推给对应 SDK（驱动 SDK 侧高频采样启停） */
+  private notifyWatchers(session: SessionId): void {
+    const sdk = this.sdks.get(sessionKey(session));
+    if (!sdk) return;
+    let count = 0;
+    for (const dbg of this.debuggers) {
+      if (sameSession(dbg.targetSession, session)) count++;
+    }
+    safeSend(
+      sdk.ws,
+      encodeFrame({
+        kind: 'msg',
+        envelope: makeEnvelope('session.watchers', { count }, 'debugger'),
+      }),
+    );
+  }
+
   /** 向订阅了指定 session 的 Debugger 推送目标在线状态变更 */
   private notifySessionStatus(session: SessionParams, connected: boolean): void {
     const target: SessionId = { deviceId: session.deviceId, pageId: session.pageId };
     const raw = encodeFrame({
       kind: 'msg',
-      envelope: makeEnvelope('session.status', { session: target, connected }, 'debugger'),
+      envelope: makeEnvelope(
+        'session.status',
+        { session: target, connected, loadId: session.loadId },
+        'debugger',
+      ),
     });
     for (const dbg of this.debuggers) {
       if (sameSession(dbg.targetSession, target)) safeSend(dbg.ws, raw);
@@ -368,37 +438,39 @@ export class Room {
     }
   }
 
-  private recordBacklog(key: string, frame: Frame): void {
+  private recordBacklog(key: string, frame: Frame, raw: string): void {
     if (frame.kind !== 'msg') return;
+    const { method } = frame.envelope;
+    if (TRANSIENT_METHODS.has(method)) return;
+
     let backlog = this.backlogs.get(key);
     if (!backlog) {
       backlog = { lastSystemInfo: null, rrwebBacklog: [], eventBacklog: [] };
       this.backlogs.set(key, backlog);
     }
 
-    const { method } = frame.envelope;
     if (method === 'system.info') {
-      backlog.lastSystemInfo = frame;
+      backlog.lastSystemInfo = raw;
       return;
     }
 
     if (method === 'dom.rrweb') {
       const data = frame.envelope.data as {
         isCheckout?: boolean;
-        event?: { type?: number };
+        event?: { type?: number; timestamp?: number };
       };
       // rrweb Meta 事件(type 4)标志新快照段起点
       if (data.event?.type === 4) {
         backlog.rrwebBacklog = [];
       }
-      backlog.rrwebBacklog.push(frame);
+      backlog.rrwebBacklog.push({ raw, ts: data.event?.timestamp });
       if (backlog.rrwebBacklog.length > this.maxRrwebBacklog) {
         backlog.rrwebBacklog.shift();
       }
       return;
     }
 
-    backlog.eventBacklog.push(frame);
+    backlog.eventBacklog.push(raw);
     if (backlog.eventBacklog.length > this.maxBacklog) {
       backlog.eventBacklog.shift();
     }
@@ -407,7 +479,8 @@ export class Room {
   /** 构建 session 快照（用于 Dashboard） */
   private buildSessionSnapshot(member: SdkMember, connected: boolean): SessionSnapshot {
     return {
-      session: member.session,
+      // 只暴露 SessionId 两个字段；identity/loadId 等连接参数不混进对外快照
+      session: { deviceId: member.session.deviceId, pageId: member.session.pageId },
       identity: member.session.identity,
       connected,
       lastActive: member.lastActive,
@@ -441,27 +514,33 @@ export class Room {
 
     let lastTs = 0;
     for (const f of backlog.rrwebBacklog) {
-      if (f.kind !== 'msg') continue;
-      const ev = (f.envelope.data as { event?: { timestamp?: number } }).event;
-      if (ev?.timestamp && ev.timestamp > lastTs) lastTs = ev.timestamp;
+      if (f.ts && f.ts > lastTs) lastTs = f.ts;
     }
     const offset = lastTs > 0 ? Math.max(0, anchorTs - lastTs - 1) : 0;
 
     for (const f of backlog.rrwebBacklog) {
-      if (f.kind !== 'msg') continue;
-      const data = f.envelope.data as { event?: { timestamp?: number } };
-      const ev = data.event;
-      if (offset === 0 || !ev || typeof ev.timestamp !== 'number') {
-        out.push(encodeFrame(f));
+      if (offset === 0 || typeof f.ts !== 'number') {
+        out.push(f.raw);
         continue;
       }
-      // 浅拷贝信封/数据/事件三层后改时间戳；backlog 对象与实时回放共享，不可原地改
+      // 只有轮转时（≥30s 一次）才解析一遍 backlog 改时间戳；热路径始终是原始字符串
+      const frame = decodeFrame(f.raw);
+      if (!frame || frame.kind !== 'msg') {
+        out.push(f.raw);
+        continue;
+      }
+      const data = frame.envelope.data as { event?: { timestamp?: number } };
+      const ev = data.event;
+      if (!ev || typeof ev.timestamp !== 'number') {
+        out.push(f.raw);
+        continue;
+      }
       out.push(
         encodeFrame({
           kind: 'msg',
           envelope: {
-            ...f.envelope,
-            timestamp: f.envelope.timestamp + offset,
+            ...frame.envelope,
+            timestamp: frame.envelope.timestamp + offset,
             data: { ...data, event: { ...ev, timestamp: ev.timestamp + offset } },
           },
         }),
@@ -473,7 +552,7 @@ export class Room {
   /** 构建录制会话元信息（写入 meta.json）。 */
   private buildRecordingMeta(member: SdkMember): SessionMeta {
     return {
-      session: member.session,
+      session: { deviceId: member.session.deviceId, pageId: member.session.pageId },
       identity: member.session.identity,
       url: member.systemInfo?.url,
       title: member.systemInfo?.title,
@@ -600,6 +679,11 @@ export class RoomRegistry {
     this.recorder = recorder;
   }
 
+  /** 只读查找：不存在不创建（HTTP 读接口用，避免任意 GET 造出幽灵房间出现在首页） */
+  peek(id: string): Room | undefined {
+    return this.rooms.get(id);
+  }
+
   get(id: string): Room {
     let room = this.rooms.get(id);
     if (!room) {
@@ -619,10 +703,11 @@ export class RoomRegistry {
     }
   }
 
-  list(): Array<{ id: string; hasSdk: boolean; debuggers: number; sessions: number }> {
+  list(): Array<{ id: string; hasSdk: boolean; online: number; debuggers: number; sessions: number }> {
     return [...this.rooms.values()].map((r) => ({
       id: r.id,
       hasSdk: r.hasSdk(),
+      online: r.onlineCount(),
       debuggers: r.debuggerCount(),
       sessions: r.getAllSessions().length,
     }));
