@@ -6,7 +6,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import type { SessionSnapshot, DashboardSessionsEvent } from '@remotr/shared';
 import { decodeFrame } from '@remotr/shared';
-import { navigateToSession, navigateToReplay } from '../router';
+import { navigateToSession, navigateToReplay, navigateToHome } from '../router';
 import ThemeToggle from '../components/ThemeToggle';
 import LanguageToggle from '../components/LanguageToggle';
 import { parseDevice, deviceDisplay } from '../ua';
@@ -175,14 +175,30 @@ export default function Dashboard({ room }: DashboardProps): React.ReactElement 
           background: 'var(--bg-secondary)',
           borderBottom: '1px solid var(--border)',
           flexShrink: 0,
+          whiteSpace: 'nowrap',
         }}
       >
+        <button
+          onClick={navigateToHome}
+          title={t('dashboard.backHomeTitle')}
+          style={{
+            background: 'var(--bg-tertiary)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border)',
+            padding: '4px 10px',
+            borderRadius: 3,
+            cursor: 'pointer',
+            fontSize: 11,
+          }}
+        >
+          {t('dashboard.backHome')}
+        </button>
         <h1 style={{ fontSize: 16, margin: 0, color: 'var(--text-primary)' }}>
           {t('dashboard.title')}
         </h1>
         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>·</span>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          {t('dashboard.room')} <code style={{ background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 3 }}>{room}</code>
+          {t('dashboard.project')} <code style={{ background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 3 }}>{room}</code>
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>·</span>
         <span style={{ fontSize: 12 }}>

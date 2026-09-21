@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useStore } from '../store';
 import { sendCommand } from '../ws';
 import type { StorageType } from '@remotr/shared';
@@ -16,25 +16,35 @@ function StorageTable({
   const t = useT();
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  // Enter 提交后输入框卸载会再触发一次 blur → 第二次 storage.set。用 ref 做一次性闸门。
+  const committingRef = useRef(false);
 
   const entries = Object.entries(data);
 
   const startEdit = (key: string, val: string) => {
+    committingRef.current = false;
     setEditingKey(key);
     setEditValue(val);
   };
 
   const commitEdit = useCallback(
     async (key: string) => {
+      if (committingRef.current) return;
+      committingRef.current = true;
+      setEditingKey(null);
       try {
         await sendCommand('storage.set', { storageType, key, value: editValue });
       } catch {
         // ignore — server may not be connected
       }
-      setEditingKey(null);
     },
     [storageType, editValue],
   );
+
+  const cancelEdit = useCallback(() => {
+    committingRef.current = true; // 取消后紧随的 blur 不得提交
+    setEditingKey(null);
+  }, []);
 
   const handleDelete = useCallback(
     async (key: string) => {
@@ -74,7 +84,7 @@ function StorageTable({
                   onBlur={() => commitEdit(key)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') commitEdit(key);
-                    if (e.key === 'Escape') setEditingKey(null);
+                    if (e.key === 'Escape') cancelEdit();
                   }}
                   style={{ width: '100%', fontFamily: 'var(--font-mono)' }}
                 />

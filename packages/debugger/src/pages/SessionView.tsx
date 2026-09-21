@@ -20,8 +20,49 @@ import { navigateToReplay } from '../router';
 import { deviceDisplay } from '../ua';
 import { useT, type MessageKey } from '../i18n';
 import { copyToClipboard } from '../clipboard';
+import { usePersistentState } from '../usePersistentState';
+import type { ConsoleRecord } from '../store';
+
+/** 「复制给 AI 修复」提示词里最多列出的错误条数（最新的在前） */
+const MCP_PROMPT_MAX_ERRORS = 5;
+const MCP_PROMPT_MESSAGE_MAX = 200;
+
+/** 把一条面板错误记录压成一行：[kind] message — 首个栈帧，供 AI 对照 remotr_get_errors 的结果 */
+function describeErrorRecord(r: ConsoleRecord): string {
+  const kind = r.type === 'page-error' ? (r.pageError?.isPromiseRejection ? 'unhandled-rejection' : 'page-error') : 'console-error';
+  const rawMessage = r.type === 'page-error' ? r.pageError?.message ?? '' : (r.entry?.args ?? []).map((a) => a.display).join(' ');
+  const message = rawMessage.length > MCP_PROMPT_MESSAGE_MAX ? `${rawMessage.slice(0, MCP_PROMPT_MESSAGE_MAX)}…` : rawMessage;
+  const stack = r.type === 'page-error' ? r.pageError?.stack : r.entry?.stack;
+  const frame = stack
+    ?.split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.startsWith('at '));
+  return `[${kind}] ${message}${frame ? ` — ${frame}` : ''}`;
+}
 
 type Tab = 'console' | 'network' | 'elements' | 'storage' | 'sources' | 'trace' | 'performance';
+
+const DEFAULT_TABS: Tab[] = ['elements', 'console', 'trace', 'performance', 'sources', 'network', 'storage'];
+
+/**
+ * 把持久化的标签顺序规整到当前版本的标签集合：
+ * 未知/已移除的丢弃，新增的追加到末尾——升级后旧配置不会让标签消失。
+ */
+function normalizeTabOrder(saved: unknown): Tab[] {
+  const known = new Set<string>(DEFAULT_TABS);
+  const kept = Array.isArray(saved)
+    ? (saved as unknown[]).filter((t): t is Tab => typeof t === 'string' && known.has(t))
+    : [];
+  const seen = new Set(kept);
+  return [...kept, ...DEFAULT_TABS.filter((t) => !seen.has(t))];
+}
+
+/** 把 from 移到 to 当前所在的位置（其余顺延），与 DevTools / 浏览器标签拖动一致 */
+function moveTab(order: Tab[], from: Tab, to: Tab): Tab[] {
+  const next = order.filter((t) => t !== from);
+  next.splice(order.indexOf(to), 0, from);
+  return next;
+}
 
 const STATUS_COLORS: Record<string, string> = {
   connected: '#4caf50',
@@ -43,9 +84,16 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
   const sourceView = useStore((s) => s.sourceView);
   const t = useT();
   const [activeTab, setActiveTab] = useState<Tab>('elements');
+  const [savedTabOrder, setSavedTabOrder] = usePersistentState<Tab[]>('session.tabOrder', DEFAULT_TABS);
+  const tabs = normalizeTabOrder(savedTabOrder);
+  /** 正在拖动的标签；用 ref 而非 state——拖动过程不需要触发渲染 */
+  const dragTabRef = useRef<Tab | null>(null);
+  /** 当前悬停的放置目标，用于高亮 */
+  const [dropTarget, setDropTarget] = useState<Tab | null>(null);
   const [reloadPending, setReloadPending] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [mcpCopied, setMcpCopied] = useState(false);
+  const [urlCopied, setUrlCopied] = useState(false);
 
   const [leftWidth, setLeftWidth] = useState(50);
   const dragging = useRef(false);
@@ -71,17 +119,32 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
 
   // 复制 MCP 对接所需内容 + 提示词，粘贴给 Claude Code 即可定位并修复本页报错。
   // 配置片段刻意不带 ?room=：房间名作为工具入参逐次传入，换房间不必再改 mcp.json。
+  // 面板对外叫 project（MCP 工具同时接受 project/room）。
+  // since = 面板当前可见记录的起点：页面刷新/清空控制台之后的第一条。AI 侧按 since 过滤，
+  // 上一轮已修好的旧错误（仍留在服务端 backlog 里）就不会在新会话里被再"修"一遍。
   const handleCopyMcp = useCallback(async () => {
     const server = window.location.origin;
-    const url = useStore.getState().systemInfo?.url;
+    const { systemInfo, consoleRecords } = useStore.getState();
+    const url = systemInfo?.url;
+    const since = consoleRecords.length > 0 ? consoleRecords[0].timestamp : Date.now();
+    const errors = consoleRecords.filter((r) => r.type === 'page-error' || (r.type === 'console' && r.level === 'error'));
+    const shown = errors.slice(-MCP_PROMPT_MAX_ERRORS).reverse();
     const lines = [
       t('mcp.promptIntro'),
       '',
       `- server: ${server}`,
-      `- room: ${room}`,
+      `- project: ${room}`,
       `- deviceId: ${deviceId}`,
       `- pageId: ${pageId}`,
       ...(url ? [`- url: ${url}`] : []),
+      `- since: ${since} (${new Date(since).toISOString()})`,
+      '',
+      ...(shown.length > 0
+        ? [
+            t('mcp.promptErrors', { shown: shown.length, total: errors.length }),
+            ...shown.map((r, i) => `${i + 1}. ${describeErrorRecord(r)}`),
+          ]
+        : [t('mcp.promptNoErrors')]),
       '',
       t('mcp.promptSteps'),
       '',
@@ -95,6 +158,15 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
     setMcpCopied(true);
     setTimeout(() => setMcpCopied(false), 1500);
   }, [room, deviceId, pageId, t]);
+
+  // 顶栏 URL 因空间被截断，hover 只能看不能选；点击直接复制完整值
+  const handleCopyUrl = useCallback(async () => {
+    const url = useStore.getState().systemInfo?.url;
+    if (!url) return;
+    await copyToClipboard(url);
+    setUrlCopied(true);
+    setTimeout(() => setUrlCopied(false), 1500);
+  }, []);
 
   const onMouseDown = useCallback(() => {
     dragging.current = true;
@@ -128,8 +200,6 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
   useEffect(() => {
     if (sourceView) setActiveTab('sources');
   }, [sourceView]);
-
-  const tabs: Tab[] = ['elements', 'console', 'trace', 'performance', 'sources', 'network', 'storage'];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
@@ -209,7 +279,7 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
         )}
 
         <span style={{ color: 'var(--text-muted)' }}>|</span>
-        <span title={`${t('dashboard.room')} ${room}`} style={{ color: 'var(--text-muted)' }}>
+        <span title={`${t('dashboard.project')} ${room}`} style={{ color: 'var(--text-muted)' }}>
           {room}
         </span>
         <span style={{ color: 'var(--text-muted)' }}>·</span>
@@ -225,10 +295,18 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
           <>
             <span style={{ color: 'var(--text-muted)' }}>|</span>
             <span
-              title={systemInfo.url}
-              style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              onClick={handleCopyUrl}
+              title={`${systemInfo.url}\n\n${t('session.copyUrlTitle')}`}
+              style={{
+                maxWidth: 240,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+                color: urlCopied ? 'var(--accent-green)' : undefined,
+              }}
             >
-              {systemInfo.url}
+              {urlCopied ? t('session.urlCopied') : systemInfo.url}
             </span>
             <span style={{ color: 'var(--text-muted)' }}>|</span>
             <span>
@@ -327,7 +405,35 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
             {tabs.map((tab) => (
               <button
                 key={tab}
+                draggable
                 onClick={() => setActiveTab(tab)}
+                onDragStart={(e) => {
+                  dragTabRef.current = tab;
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', tab);
+                }}
+                onDragOver={(e) => {
+                  const from = dragTabRef.current;
+                  if (!from || from === tab) return;
+                  e.preventDefault(); // 允许放置
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dropTarget !== tab) setDropTarget(tab);
+                }}
+                onDragLeave={() => {
+                  if (dropTarget === tab) setDropTarget(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const from = dragTabRef.current;
+                  dragTabRef.current = null;
+                  setDropTarget(null);
+                  if (from && from !== tab) setSavedTabOrder(moveTab(tabs, from, tab));
+                }}
+                onDragEnd={() => {
+                  dragTabRef.current = null;
+                  setDropTarget(null);
+                }}
+                title={t('session.tabDragHint')}
                 style={{
                   border: 'none',
                   borderBottom: activeTab === tab ? '2px solid var(--accent-blue)' : '2px solid transparent',
@@ -338,11 +444,30 @@ export default function SessionView({ room, deviceId, pageId, onBack }: SessionV
                   cursor: 'pointer',
                   fontSize: 12,
                   textTransform: 'capitalize',
+                  // 放置目标：左侧竖线提示落点
+                  boxShadow: dropTarget === tab ? 'inset 2px 0 0 var(--accent-blue)' : undefined,
                 }}
               >
                 {t(`tab.${tab}` as MessageKey)}
               </button>
             ))}
+            <span style={{ flex: 1 }} />
+            {tabs.some((tab, i) => tab !== DEFAULT_TABS[i]) && (
+              <button
+                onClick={() => setSavedTabOrder(DEFAULT_TABS)}
+                title={t('session.tabResetOrder')}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                  padding: '6px 8px',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                }}
+              >
+                ↺
+              </button>
+            )}
           </div>
 
           <div style={{ flex: 1, overflow: 'hidden' }}>

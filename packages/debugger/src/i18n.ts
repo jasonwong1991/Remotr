@@ -34,9 +34,22 @@ const en = {
   'theme.lightLabel': '☀ Light',
   // ── language toggle ─────────────────────────────────────
   'lang.toggleTitle': 'Switch to 中文',
+  // ── home (project list) ─────────────────────────────────
+  'home.title': '🔍 Remotr',
+  'home.projects': 'Projects',
+  'home.active': '{count} active',
+  'home.openPlaceholder': 'Project name…',
+  'home.open': 'Open',
+  'home.debuggers': '{count} debuggers',
+  'home.noProjects': 'No active projects',
+  'home.noProjectsHint':
+    'A project appears here as soon as a page with the SDK injected connects. To get the inject snippet, open a project by name above.',
+  'home.loadError': 'Failed to load project list',
   // ── dashboard ───────────────────────────────────────────
   'dashboard.title': '🔍 Remotr Dashboard',
-  'dashboard.room': 'Room:',
+  'dashboard.project': 'Project:',
+  'dashboard.backHome': '← Projects',
+  'dashboard.backHomeTitle': 'Back to project list',
   'dashboard.online': '● {count} online',
   'dashboard.total': '/ {count} total',
   'dashboard.groupByIdentity': 'Group by identity',
@@ -77,6 +90,10 @@ const en = {
   'session.targetOnline': 'Device online',
   'session.targetOffline': 'Device offline',
   'session.reloadOfflineTitle': 'Target device is offline — commands are unavailable until it reconnects',
+  'session.copyUrlTitle': 'Click to copy the full URL',
+  'session.urlCopied': '✓ URL copied',
+  'session.tabDragHint': 'Drag to reorder tabs (order is remembered)',
+  'session.tabResetOrder': 'Reset tab order',
   'session.offlineBanner':
     'Target device is offline. Panels below still render the last recorded state, but console eval, storage writes, element edits, tracepoints and reload will all fail until it reconnects.',
   // ── main tabs (SessionView) ─────────────────────────────
@@ -97,6 +114,9 @@ const en = {
   'component.loading': 'Inspecting component...',
   'component.notComponent': 'Element does not belong to a React/Vue component.',
   'component.empty': '(empty)',
+  'component.live': 'Live',
+  'component.liveOnTitle': 'Props / state refresh every second while this pane is open. Click to pause.',
+  'component.liveOffTitle': 'Live refresh paused. Click to resume.',
   // ── console panel ───────────────────────────────────────
   'console.clearTitle': 'Clear console',
   'console.filter': 'Filter…',
@@ -154,14 +174,26 @@ const en = {
   'sources.resolving': 'resolving…',
   'sources.noFrames': 'No resolvable frames',
   'sources.jumpTitle': 'Jump to source',
+  'sources.mapOk': 'map',
+  'sources.mapOkTitle': 'Source map auto-loaded from sourceMappingURL',
+  'sources.mapManual': 'map (imported)',
+  'sources.mapManualTitle': 'Using a manually imported source map',
+  'sources.mapMissing': 'no map',
+  'sources.mapMissingTitle': 'This script has no sourceMappingURL comment — import a .map file manually',
+  'sources.mapErrorTitle': 'Source map could not be loaded ({reason}) — import a .map file manually',
+  'sources.importMap': '📥 Import .map',
+  'sources.importMapTitle': 'Import a local .map file for the selected script (overrides the auto-loaded one)',
+  'sources.importMapInvalid': 'Not a valid source map file',
   // ── mcp (copy for Claude Code) ──────────────────────────
   'mcp.copy': '🤖 Copy for AI fix',
   'mcp.copied': '✓ Copied',
   'mcp.copyTitle': 'Copy MCP context + prompt to paste into Claude Code',
   'mcp.promptIntro': "Use the remotr MCP to locate and fix this page's runtime error, mapping it back to source in this repo:",
-  'mcp.promptSteps': 'Pass room/deviceId/pageId above as arguments to every remotr_* call. Call remotr_get_errors, then remotr_get_context (errorIndex from 0). Use the source-map-resolved location + code snippet + console/network context to locate and fix it in this repo.',
+  'mcp.promptErrors': 'Errors currently shown in the panel (newest first, {shown} of {total}):',
+  'mcp.promptNoErrors': 'The panel currently shows no errors — if remotr_get_errors returns nothing for this since, there is nothing to fix.',
+  'mcp.promptSteps': 'Pass project/deviceId/pageId above as arguments to every remotr_* call ("room" is an alias of project), and pass since to every error tool (remotr_get_errors / remotr_diagnose / remotr_get_context). Only handle errors with timestamp ≥ since — the ones listed above; anything older in the backlog was already fixed in a previous round, leave it alone. Start with remotr_diagnose (latest error by default), or remotr_get_errors then remotr_get_context with an errorIndex from that list. Use the source-map-resolved location + code snippet + console/network context to locate and fix it in this repo.',
   'mcp.promptConfigNote': 'If the remotr MCP is not configured yet, add it to your project .mcp.json:',
-  'mcp.promptConfigStable': 'This URL carries no room, so it never needs updating — if an existing entry still ends with ?room=…, drop the query string and pass room per call instead.',
+  'mcp.promptConfigStable': 'This URL carries no project/room, so it never needs updating — if an existing entry still ends with ?room=…, drop the query string and pass project per call instead.',
   // ── network panel ───────────────────────────────────────
   'network.filterUrl': 'Filter by URL…',
   'network.requests': '{count} requests',
@@ -226,6 +258,7 @@ const en = {
   'network.filterType.js': 'JS',
   'network.filterType.css': 'CSS',
   'network.filterType.img': 'Img',
+  'network.filterType.font': 'Font',
   'network.filterType.doc': 'Doc',
   'network.filterType.other': 'Other',
   // ── storage panel ───────────────────────────────────────
@@ -327,8 +360,19 @@ const zh: Record<MessageKey, string> = {
   'theme.darkLabel': '☾ 深色',
   'theme.lightLabel': '☀ 浅色',
   'lang.toggleTitle': 'Switch to English',
+  'home.title': '🔍 Remotr',
+  'home.projects': '项目',
+  'home.active': '{count} 个活跃',
+  'home.openPlaceholder': '项目名…',
+  'home.open': '打开',
+  'home.debuggers': '{count} 个调试端',
+  'home.noProjects': '暂无活跃项目',
+  'home.noProjectsHint': '注入了 SDK 的页面一连上，项目就会出现在这里。要获取注入代码，可在上方按项目名直接打开。',
+  'home.loadError': '项目列表加载失败',
   'dashboard.title': '🔍 Remotr 控制台',
-  'dashboard.room': '房间：',
+  'dashboard.project': '项目：',
+  'dashboard.backHome': '← 项目列表',
+  'dashboard.backHomeTitle': '返回项目列表',
   'dashboard.online': '● {count} 在线',
   'dashboard.total': '/ 共 {count}',
   'dashboard.groupByIdentity': '按身份分组',
@@ -367,6 +411,10 @@ const zh: Record<MessageKey, string> = {
   'session.targetOnline': '设备在线',
   'session.targetOffline': '设备已离线',
   'session.reloadOfflineTitle': '目标设备已离线，重连后才能执行命令',
+  'session.copyUrlTitle': '点击复制完整 URL',
+  'session.urlCopied': '✓ 已复制 URL',
+  'session.tabDragHint': '拖动可调整标签顺序（会记住）',
+  'session.tabResetOrder': '恢复默认标签顺序',
   'session.offlineBanner':
     '目标设备已离线。下方面板展示的仍是最后一次记录的状态，但 console 求值、storage 写入、元素修改、tracepoint 与重新加载在设备重连前都会失败。',
   'tab.console': '控制台',
@@ -381,6 +429,9 @@ const zh: Record<MessageKey, string> = {
   'component.loading': '正在检查组件...',
   'component.notComponent': '该元素不属于 React / Vue 组件树。',
   'component.empty': '(空)',
+  'component.live': '实时',
+  'component.liveOnTitle': '面板打开期间每秒刷新 props / state。点击暂停。',
+  'component.liveOffTitle': '已暂停实时刷新。点击恢复。',
   'tab.styles': '样式',
   'tab.computed': '计算后',
   'tab.boxModel': '盒模型',
@@ -437,13 +488,25 @@ const zh: Record<MessageKey, string> = {
   'sources.resolving': '还原中…',
   'sources.noFrames': '无可还原的栈帧',
   'sources.jumpTitle': '跳转到源码',
+  'sources.mapOk': 'map',
+  'sources.mapOkTitle': '已按 sourceMappingURL 自动加载 source map',
+  'sources.mapManual': 'map（已导入）',
+  'sources.mapManualTitle': '正在使用手动导入的 source map',
+  'sources.mapMissing': '无 map',
+  'sources.mapMissingTitle': '脚本没有 sourceMappingURL 注释——可手动导入 .map 文件',
+  'sources.mapErrorTitle': 'source map 加载失败（{reason}）——可手动导入 .map 文件',
+  'sources.importMap': '📥 导入 .map',
+  'sources.importMapTitle': '为当前脚本导入本地 .map 文件（覆盖自动加载的）',
+  'sources.importMapInvalid': '不是有效的 source map 文件',
   'mcp.copy': '🤖 复制给 AI 修复',
   'mcp.copied': '✓ 已复制',
   'mcp.copyTitle': '复制 MCP 上下文与提示词，粘贴给 Claude Code 定位修复报错',
   'mcp.promptIntro': '用 remotr MCP 定位并修复此页面的运行时报错，对应到本仓库源码：',
-  'mcp.promptSteps': '上面的 room/deviceId/pageId 需作为参数传给每一次 remotr_* 调用。依次调用 remotr_get_errors、remotr_get_context（errorIndex 从 0 开始），用返回的还原源码位置 + 源码片段 + console/network 上下文，定位到本仓库源文件并修复。',
+  'mcp.promptErrors': '面板当前显示的错误（新的在前，共 {total} 条，列出 {shown} 条）：',
+  'mcp.promptNoErrors': '面板当前没有显示任何错误——若 remotr_get_errors 按此 since 也查不到，说明没有需要修的问题。',
+  'mcp.promptSteps': '上面的 project/deviceId/pageId 需作为参数传给每一次 remotr_* 调用（room 是 project 的别名），since 需传给每一次错误类调用（remotr_get_errors / remotr_diagnose / remotr_get_context）。只处理 timestamp ≥ since 的错误，也就是上面列出的这些；backlog 里更早的错误是上一轮已经修复过的，不要再动。先调 remotr_diagnose（默认取最新一条），或先 remotr_get_errors 再按其 errorIndex 调 remotr_get_context；用返回的还原源码位置 + 源码片段 + console/network 上下文，定位到本仓库源文件并修复。',
   'mcp.promptConfigNote': '若尚未配置 remotr MCP，在项目 .mcp.json 中加入：',
-  'mcp.promptConfigStable': '该 URL 不带 room，因此配置一次即可、无需再更新；若已有配置仍以 ?room=… 结尾，请删掉 query 改为每次调用传 room 参数。',
+  'mcp.promptConfigStable': '该 URL 不带 project/room，因此配置一次即可、无需再更新；若已有配置仍以 ?room=… 结尾，请删掉 query 改为每次调用传 project 参数。',
   'network.filterUrl': '按 URL 筛选…',
   'network.requests': '{count} 个请求',
   'network.name': '名称',
@@ -505,6 +568,7 @@ const zh: Record<MessageKey, string> = {
   'network.filterType.js': 'JS',
   'network.filterType.css': 'CSS',
   'network.filterType.img': '图片',
+  'network.filterType.font': '字体',
   'network.filterType.doc': '文档',
   'network.filterType.other': '其他',
   'storage.key': '键',
@@ -581,16 +645,25 @@ interface LocaleState {
   setLocale: (l: Locale) => void;
 }
 
+/** localStorage may throw (panel embedded in a storage-blocked iframe) — fall back to English. */
 function getStoredLocale(): Locale {
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  return stored === 'zh' || stored === 'en' ? stored : 'en'; // default: English
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    return stored === 'zh' || stored === 'en' ? stored : 'en'; // default: English
+  } catch {
+    return 'en';
+  }
 }
 
 /** Reactive locale store. Components subscribing via `useT()` re-render on change. */
 export const useLocale = create<LocaleState>((set) => ({
   locale: getStoredLocale(),
   setLocale: (locale) => {
-    window.localStorage.setItem(STORAGE_KEY, locale);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, locale);
+    } catch {
+      /* session-only when storage is unavailable */
+    }
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
     set({ locale });
   },

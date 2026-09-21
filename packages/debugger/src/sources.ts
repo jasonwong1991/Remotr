@@ -17,6 +17,34 @@ const FETCH_TIMEOUT_MS = 30_000;
 
 const _cache = new Map<string, SourcesFetchResult>();
 
+/**
+ * 手动导入的 source map（scriptUrl → map JSON）。
+ * 用于 map 未同源部署 / hidden-source-map / 被 CORS 拦下的场景。
+ * 以脚本 url 为键、独立于 _cache：切 session 不清（同一 bundle 换台设备照样能用），
+ * 且优先级高于 SDK 自动取到的 map。
+ */
+const _manualMaps = new Map<string, string>();
+
+/** 用手动导入的 map 覆盖取回结果（无导入则原样返回） */
+function withManualMap(res: SourcesFetchResult): SourcesFetchResult {
+  const map = _manualMaps.get(res.url);
+  return map ? { ...res, map, mapError: undefined } : res;
+}
+
+/**
+ * 登记手动导入的 map。做最小校验（须为含 mappings 的 JSON），失败返回 false。
+ * 之后 fetchSource / resolveStack 对该脚本一律用它。
+ */
+export function importSourceMap(scriptUrl: string, mapJson: string): boolean {
+  if (!createResolver(mapJson)) return false;
+  _manualMaps.set(scriptUrl, mapJson);
+  return true;
+}
+
+export function hasManualMap(scriptUrl: string): boolean {
+  return _manualMaps.has(scriptUrl);
+}
+
 export async function listSources(): Promise<ScriptInfo[]> {
   try {
     const reply = await sendCommand('sources.list', {});
@@ -29,16 +57,16 @@ export async function listSources(): Promise<ScriptInfo[]> {
 
 export async function fetchSource(url: string): Promise<SourcesFetchResult | null> {
   const cached = _cache.get(url);
-  if (cached) return cached;
+  if (cached) return withManualMap(cached);
   try {
     const reply = await sendCommand('sources.fetch', { url }, FETCH_TIMEOUT_MS);
-    if (reply.error) return { url, content: '', error: reply.error };
+    if (reply.error) return withManualMap({ url, content: '', error: reply.error });
     const result = reply.result as SourcesFetchResult;
     // 仅缓存成功取到内容的结果，失败可重试
     if (result && result.content) _cache.set(url, result);
-    return result;
+    return result ? withManualMap(result) : result;
   } catch (err) {
-    return { url, content: '', error: err instanceof Error ? err.message : String(err) };
+    return withManualMap({ url, content: '', error: err instanceof Error ? err.message : String(err) });
   }
 }
 

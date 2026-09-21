@@ -7,9 +7,9 @@ import { buildCurl } from '../curl';
 import { buildHar } from '../har';
 
 /** Resource type buckets for the HTTP type filter. */
-export type ResourceType = 'xhr' | 'js' | 'css' | 'img' | 'doc' | 'other';
+export type ResourceType = 'xhr' | 'js' | 'css' | 'img' | 'font' | 'doc' | 'other';
 
-const RESOURCE_TYPES: ResourceType[] = ['xhr', 'js', 'css', 'img', 'doc', 'other'];
+const RESOURCE_TYPES: ResourceType[] = ['xhr', 'js', 'css', 'img', 'font', 'doc', 'other'];
 
 /**
  * Classify a record into a coarse resource type for filtering.
@@ -21,14 +21,14 @@ export function resourceType(record: NetworkRecord): ResourceType {
   const initiator = record.request?.initiator;
   if (initiator === 'fetch' || initiator === 'xhr' || initiator === 'beacon') return 'xhr';
   if (initiator === 'script') return 'js';
-  if (initiator === 'css' || initiator === 'link') return 'css';
   if (initiator === 'img') return 'img';
-  if (initiator === 'iframe') return 'doc';
+  if (initiator === 'navigation' || initiator === 'iframe') return 'doc';
 
   const mime = record.response?.mimeType?.toLowerCase() ?? '';
   if (mime.includes('javascript') || mime.includes('ecmascript')) return 'js';
   if (mime.includes('css')) return 'css';
   if (mime.startsWith('image/')) return 'img';
+  if (mime.startsWith('font/') || mime.includes('font')) return 'font';
   if (mime.includes('html')) return 'doc';
 
   const url = record.request?.url ?? '';
@@ -37,7 +37,13 @@ export function resourceType(record: NetworkRecord): ResourceType {
   if (ext === 'js' || ext === 'mjs' || ext === 'cjs') return 'js';
   if (ext === 'css') return 'css';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'ico', 'bmp'].includes(ext)) return 'img';
+  if (['woff', 'woff2', 'ttf', 'otf', 'eot'].includes(ext)) return 'font';
   if (ext === 'html' || ext === 'htm') return 'doc';
+
+  // `css` initiator = requested *by* a stylesheet (fonts / background images),
+  // `link` = <link> tags (stylesheets, but also preload/icon) — only decide
+  // after MIME/extension had their say.
+  if (initiator === 'css' || initiator === 'link') return 'css';
 
   return 'other';
 }
@@ -219,8 +225,7 @@ export function DetailPanel({ record }: { record: NetworkRecord }): React.ReactE
   const tabs = ['general', 'req-headers', 'res-headers', 'req-body', 'res-body', 'timing'] as const;
 
   const status = record.response?.status;
-  const isEstimated = !!record.request?.timing && !record.response?.headers
-    || (record.response && Object.keys(record.response.headers).length === 0);
+  const isEstimated = !!record.response?.statusEstimated;
 
   const copyCurl = async (): Promise<void> => {
     await copyToClipboard(buildCurl(record));
@@ -390,10 +395,11 @@ function HttpView(): React.ReactElement {
           <tbody>
             {records.map((r) => {
               const isSelected = selected === r.reqId;
-              const status = r.response?.status;
               const errorType = r.error?.errorType;
               const fromCache = r.response?.fromCache;
               const hasError = !!r.error;
+              // 失败且状态码只是推断值（DNS/连接失败的标签加载）时不显示误导性的 200
+              const status = hasError && r.response?.statusEstimated ? undefined : r.response?.status;
               return (
                 <tr
                   key={r.reqId}

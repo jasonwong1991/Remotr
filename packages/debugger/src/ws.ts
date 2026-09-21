@@ -11,6 +11,7 @@ import {
 } from '@remotr/shared';
 import { useStore } from './store';
 import { clearSourcesCache } from './sources';
+import { getCurrentProject } from './router';
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 10_000;
@@ -24,16 +25,12 @@ let _reconnectDelay = RECONNECT_BASE_MS;
 let _destroyed = false;
 let _currentSession: SessionId | null = null;
 let _connectionGeneration = 0; // Guard against stale socket callbacks
+/** 目标最近一次 session.status 带来的页面加载标识；变化即目标刷新过 */
+let _lastLoadId: string | null = null;
 
+/** 面板 URL 里的 project 在服务端叫 room（同一概念，仅面板改了叫法） */
 function getRoomId(): string {
-  // 优先从 hash 读取，其次从 search
-  const hash = window.location.hash.slice(1);
-  if (hash.includes('?')) {
-    const params = new URLSearchParams(hash.split('?')[1]);
-    if (params.has('room')) return params.get('room')!;
-  }
-  const params = new URLSearchParams(window.location.search);
-  return params.get('room') ?? 'default';
+  return getCurrentProject() ?? 'default';
 }
 
 function getWsUrl(): string {
@@ -60,6 +57,7 @@ function sameSession(a: SessionId | null, b: SessionId | null): boolean {
 /** 设置当前 session 目标（用于 Session 调试模式） */
 export function setTargetSession(session: SessionId | null): void {
   _currentSession = session;
+  _lastLoadId = null;
 }
 
 /** 获取当前 session 目标 */
@@ -165,6 +163,13 @@ function handleFrame(raw: string, generation: number): void {
       const d = data as MethodData['session.status'];
       if (sameSession(_currentSession, d.session)) {
         store.setTargetOnline(d.connected);
+        // 目标页面刷新/重进（loadId 变化）：像 DevTools 不勾 preserve log 一样清掉
+        // 上一次加载的 console/network/… 历史，新加载的数据随后到达。
+        // 首次收到（_lastLoadId 为空）只记录不清，避免抹掉 replayTo 刚回放的 backlog。
+        if (d.loadId && _lastLoadId && d.loadId !== _lastLoadId) {
+          store.resetSessionDataPreserveConnection();
+        }
+        if (d.loadId) _lastLoadId = d.loadId;
       }
       break;
     }
@@ -249,6 +254,7 @@ export function switchTargetSession(session: SessionId | null): void {
   }
 
   _currentSession = session;
+  _lastLoadId = null;
 
   // Clear pending commands
   for (const { timer } of _pending.values()) {
